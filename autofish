@@ -1,0 +1,245 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
+
+if not PlayerGui then return end
+
+local Config = {
+    Keybind = 0x74,
+    CastTarget = 0.962,
+    WaitBeforeReel = 0.2,
+    DeadZone = 0.5,
+}
+
+local State = {
+    Running = false,
+    IsHolding = false,
+    CastComplete = false,
+    FishDetected = false,
+    WaitingForUI = false,
+    ReelingStarted = false,
+    WaitStart = 0,
+    Clicks = 0,
+    FishCaught = 0,
+}
+
+local function Hold()
+    if not State.IsHolding then
+        State.IsHolding = true
+        mouse1press()
+        State.Clicks = State.Clicks + 1
+    end
+end
+
+local function Release()
+    if State.IsHolding then
+        State.IsHolding = false
+        mouse1release()
+    end
+end
+
+local function Click()
+    mouse1click()
+    State.Clicks = State.Clicks + 1
+end
+
+local function GetCastFrame()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local part = char:FindFirstChild("Fishing_Cast Meter")
+    if not part then return nil end
+    local meter = part:FindFirstChild("CastMeter")
+    if not meter then return nil end
+    local bar = meter:FindFirstChild("Bar")
+    if not bar then return nil end
+    return bar:FindFirstChild("Frame")
+end
+
+local function GetCastFill()
+    local frame = GetCastFrame()
+    if not frame then return 0 end
+    local ok1, size = pcall(function() return frame.AbsoluteSize.Y end)
+    local ok2, max = pcall(function() return frame.Parent.AbsoluteSize.Y end)
+    if ok1 and ok2 and size and max and max > 0 then return size / max end
+    return 0
+end
+
+local function GetReelUI()
+    local ui = PlayerGui:FindFirstChild("Fishing_Reeling")
+    if not ui then return nil end
+    local mini = ui:FindFirstChild("Minigame")
+    if not mini then return nil end
+    local container = mini:FindFirstChild("Container")
+    if not container then return nil end
+    return {
+        Fish = container:FindFirstChild("Fish"),
+        Zone = container:FindFirstChild("ReelZone"),
+    }
+end
+
+local function IsReelOpen()
+    return PlayerGui:FindFirstChild("Fishing_Reeling") ~= nil
+end
+
+local function GetCenter(obj)
+    if not obj then return 0 end
+    local ok1, x = pcall(function() return obj.AbsolutePosition.X end)
+    local ok2, w = pcall(function() return obj.AbsoluteSize.X end)
+    if ok1 and ok2 and x and w then return x + w/2 end
+    return 0
+end
+
+local function GetFishSound()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local rod = char:FindFirstChild("Fishing Rod")
+    if not rod then return nil end
+    local part = rod:FindFirstChild("Fishing Rod")
+    if not part then return nil end
+    local metal = part:FindFirstChild("Metal")
+    if not metal then return nil end
+    return metal:FindFirstChild("FishOnLine")
+end
+
+local function IsZoneLeft(ui)
+    if not ui then return false end
+    local fish = GetCenter(ui.Fish)
+    local zone = GetCenter(ui.Zone)
+    if fish == 0 or zone == 0 then return false end
+    return zone < fish - Config.DeadZone
+end
+
+local function MainLoop()
+    State.WaitStart = 0
+    local ending = false
+    local endTimer = 0
+    local wasOpen = false
+    
+    while State.Running do
+        task.wait(0.05)
+        
+        if not State.CastComplete then
+            local frame = GetCastFrame()
+            if frame then
+                Hold()
+                if GetCastFill() >= Config.CastTarget then
+                    Release()
+                    State.CastComplete = true
+                    State.FishDetected = false
+                    State.WaitingForUI = false
+                    State.ReelingStarted = false
+                    State.WaitStart = 0
+                    ending = false
+                    wasOpen = false
+                end
+            else
+                if not State.IsHolding then Click() task.wait(0.1) end
+            end
+            continue
+        end
+        
+        if State.CastComplete and not State.FishDetected then
+            if GetFishSound() then
+                State.FishDetected = true
+                Click() task.wait(0.3) Click() task.wait(0.3) Click()
+            end
+            continue
+        end
+        
+        if State.FishDetected then
+            local open = IsReelOpen()
+            
+            if open then
+                wasOpen = true
+                local ui = GetReelUI()
+                if ui then
+                    if not State.WaitingForUI then
+                        State.WaitingForUI = true
+                        State.ReelingStarted = false
+                        State.WaitStart = os.clock()
+                        ending = false
+                    end
+                    
+                    if not State.ReelingStarted then
+                        if os.clock() - State.WaitStart >= Config.WaitBeforeReel then
+                            State.ReelingStarted = true
+                            Click() task.wait(0.2) Click()
+                        end
+                        continue
+                    end
+                    
+                    if State.ReelingStarted then
+                        if IsZoneLeft(ui) then Hold() else Release() end
+                    end
+                end
+            else
+                if wasOpen and not ending then
+                    ending = true
+                    endTimer = os.clock()
+                    State.FishCaught = State.FishCaught + 1
+                    Release()
+                    notify("Fish caught! (" .. State.FishCaught .. ")", "AutoFish", 2)
+                end
+                
+                if ending then
+                    local elapsed = os.clock() - endTimer
+                    if elapsed >= 0 and elapsed < 0.05 then
+                        Click()
+                    elseif elapsed >= 0.2 and elapsed < 0.25 then
+                        Click()
+                    elseif elapsed >= 0.4 and elapsed < 0.45 then
+                        Click()
+                    elseif elapsed >= 0.5 then
+                        State.CastComplete = false
+                        State.FishDetected = false
+                        State.WaitingForUI = false
+                        State.ReelingStarted = false
+                        State.WaitStart = 0
+                        ending = false
+                        wasOpen = false
+                    end
+                end
+                State.WaitStart = os.clock()
+            end
+        end
+    end
+end
+
+local function HandleKeybind()
+    if iskeypressed(Config.Keybind, 0) then
+        if not State._KeyCooldown then
+            State._KeyCooldown = true
+            if State.Running then
+                State.Running = false
+                Release()
+                print("Stopped. Fish: " .. State.FishCaught)
+                notify("Stopped. Fish: " .. State.FishCaught, "AutoFish", 2)
+            else
+                State.Running = true
+                State.CastComplete = false
+                State.FishDetected = false
+                State.WaitingForUI = false
+                State.ReelingStarted = false
+                State.WaitStart = 0
+                State.Clicks = 0
+                State.FishCaught = 0
+                task.spawn(MainLoop)
+                print("Started. Press F5 to stop.")
+                notify("AutoFish started!", "AutoFish", 2)
+            end
+            task.wait(0.3)
+            State._KeyCooldown = false
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        HandleKeybind()
+        task.wait(0.05)
+    end
+end)
+
+print("AutoFish loaded. Press F5 to start.")
+notify("AutoFish loaded. Press F5 to start.", "AutoFish", 3)

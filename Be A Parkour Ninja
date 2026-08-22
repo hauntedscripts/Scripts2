@@ -1,0 +1,240 @@
+local Players = game:GetService('Players')
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    repeat wait(0.1); LocalPlayer = Players.LocalPlayer until LocalPlayer
+end
+
+local cfg = {
+    ORBIT_RADIUS  = 4,
+    ORBIT_SPEED   = 2.5,
+    M1_DURATION   = 1,
+    M1_RATE       = 0.06,
+    IDLE_RISE     = 2,
+    MAX_IDLE_Y    = 500,
+    TWEEN_SPEED   = 230,
+    KILL_LIMIT    = 7,
+    KILL_COOLDOWN = 3,
+    V_KEY         = 0x56,
+}
+
+local state = {
+    enabled       = false,
+    cachedTargets = {},
+    lastRescan    = 0,
+    killCount     = 0,
+    cooling       = false,
+    lastRiseTime  = os.clock(),
+    vWasPressed   = false,
+}
+
+-- NEW: toggle CanCollide on all local character parts
+local function setNoclip(on)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in pairs(char:GetDescendants()) do
+        if part.ClassName == 'Part' or part.ClassName == 'MeshPart' or part.ClassName == 'UnionOperation' then
+            part.CanCollide = not on
+        end
+    end
+end
+
+local function hasForceField(character)
+    for _, child in pairs(character:GetChildren()) do
+        if child.ClassName == 'ForceField' then return true end
+    end
+    return false
+end
+
+local function isValid(player)
+    if player.Name == LocalPlayer.Name then return false end
+    if not player.Parent then return false end
+    local char = player.Character
+    if not char or not char.Parent then return false end
+    local hum = char:FindFirstChildOfClass('Humanoid')
+    if not hum or hum.Health <= 0 then return false end
+    local hrp = char:FindFirstChild('HumanoidRootPart')
+    if not hrp then return false end
+    if hasForceField(char) then return false end
+    return true
+end
+
+local function getMyHRP()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    return char:FindFirstChild('HumanoidRootPart')
+end
+
+local function rescanPlayers()
+    state.cachedTargets = {}
+    for _, player in pairs(Players:GetPlayers()) do
+        if player.Name == LocalPlayer.Name then continue end
+        if isValid(player) then
+            table.insert(state.cachedTargets, player)
+        end
+    end
+end
+
+local function getNearestTarget(myHRP)
+    local best, bestDist = nil, math.huge
+    for _, player in pairs(state.cachedTargets) do
+        if isValid(player) then
+            local tHRP = player.Character:FindFirstChild('HumanoidRootPart')
+            if tHRP then
+                local dx = tHRP.Position.X - myHRP.Position.X
+                local dy = tHRP.Position.Y - myHRP.Position.Y
+                local dz = tHRP.Position.Z - myHRP.Position.Z
+                local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if dist < bestDist then bestDist = dist; best = player end
+            end
+        end
+    end
+    return best
+end
+
+local function tweenToTarget(myHRP, tHRP)
+    setNoclip(true) -- NEW: disable collision before moving
+
+    local lastStep = os.clock()
+    local startPos  = myHRP.Position
+    local targetPos = tHRP.Position
+    local stepStart = os.clock()
+
+    local function calcStep()
+        local dx = targetPos.X - startPos.X
+        local dy = targetPos.Y - startPos.Y
+        local dz = targetPos.Z - startPos.Z
+        local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+        local stopDist = math.max(dist - cfg.ORBIT_RADIUS, 0)
+        return dx, dy, dz, dist, stopDist
+    end
+
+    while true do
+        local now = os.clock()
+        if now - lastStep >= 0.05 then
+            startPos  = myHRP.Position
+            targetPos = tHRP.Position
+            stepStart = now
+            lastStep  = now
+        end
+
+        local dx, dy, dz, dist, stopDist = calcStep()
+        if stopDist < 0.5 then break end
+
+        local duration = stopDist / cfg.TWEEN_SPEED
+        local alpha    = math.min((now - stepStart) / duration, 1)
+        local ux, uy, uz = dx / dist, dy / dist, dz / dist
+        local endPos = Vector3.new(
+            startPos.X + ux * stopDist,
+            startPos.Y + uy * stopDist,
+            startPos.Z + uz * stopDist
+        )
+        local newPos = Vector3.new(
+            startPos.X + (endPos.X - startPos.X) * alpha,
+            startPos.Y + (endPos.Y - startPos.Y) * alpha,
+            startPos.Z + (endPos.Z - startPos.Z) * alpha
+        )
+        myHRP.CFrame                 = CFrame.lookAt(newPos, tHRP.Position)
+        myHRP.Velocity               = Vector3.new(0, 0, 0)
+        myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+
+        if alpha >= 1 then break end
+        task.wait()
+    end
+
+    setNoclip(false) -- NEW: restore collision after arriving
+end
+
+while true do
+    local vPressed = iskeypressed(cfg.V_KEY)
+    if vPressed and not state.vWasPressed then
+        state.enabled   = not state.enabled
+        state.killCount = 0
+        state.cooling   = false
+        notify(state.enabled and 'Orbit ON' or 'Orbit OFF', 'Orbit', 1.5)
+    end
+    state.vWasPressed = vPressed
+
+    local now = os.clock()
+    if now - state.lastRescan >= 0.1 then
+        rescanPlayers()
+        state.lastRescan = now
+    end
+
+    if not state.enabled then task.wait() continue end
+    if state.cooling     then task.wait() continue end
+
+    local myHRP = getMyHRP()
+    local target = myHRP and getNearestTarget(myHRP)
+
+    if not target then
+        local now = os.clock()
+        if myHRP and myHRP.Position.Y < cfg.MAX_IDLE_Y then
+            local dt = now - state.lastRiseTime
+            myHRP.Position               = Vector3.new(myHRP.Position.X, myHRP.Position.Y + cfg.IDLE_RISE * dt, myHRP.Position.Z)
+            myHRP.Velocity               = Vector3.new(0, 0, 0)
+            myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        end
+        state.lastRiseTime = now
+        task.wait()
+    else
+        state.lastRiseTime = os.clock()
+
+        local tHRP = target.Character and target.Character:FindFirstChild('HumanoidRootPart')
+        if not tHRP then task.wait() continue end
+
+        tweenToTarget(myHRP, tHRP)
+
+        local wasAlive  = isValid(target)
+        local startTime = os.clock()
+        local lastM1    = os.clock()
+
+        while (os.clock() - startTime) < cfg.M1_DURATION do
+            if not state.enabled then break end
+            if state.cooling     then break end
+
+            myHRP = getMyHRP()
+            if not myHRP then break end
+
+            if wasAlive and not isValid(target) then
+                state.killCount = state.killCount + 1
+                notify('Kills: ' .. state.killCount .. ' / ' .. cfg.KILL_LIMIT, 'Orbit', 1)
+                wasAlive = false
+                if state.killCount >= cfg.KILL_LIMIT then
+                    state.cooling = true
+                    notify('Cooling down ' .. cfg.KILL_COOLDOWN .. 's...', 'Orbit', cfg.KILL_COOLDOWN)
+                    task.spawn(function()
+                        task.wait(cfg.KILL_COOLDOWN)
+                        state.killCount = 0
+                        state.cooling   = false
+                        notify('Resuming!', 'Orbit', 1.5)
+                    end)
+                end
+                break
+            end
+
+            target = getNearestTarget(myHRP)
+            if not target then break end
+
+            tHRP = target.Character and target.Character:FindFirstChild('HumanoidRootPart')
+            if not tHRP then break end
+
+            local elapsed  = os.clock() - startTime
+            local angle    = elapsed * cfg.ORBIT_SPEED
+            local orbitPos = Vector3.new(
+                tHRP.Position.X + math.cos(angle) * cfg.ORBIT_RADIUS,
+                tHRP.Position.Y,
+                tHRP.Position.Z + math.sin(angle) * cfg.ORBIT_RADIUS
+            )
+            myHRP.CFrame                 = CFrame.lookAt(orbitPos, tHRP.Position)
+            myHRP.Velocity               = Vector3.new(0, 0, 0)
+            myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+
+            local now = os.clock()
+            if now - lastM1 >= cfg.M1_RATE then
+                mouse1click()
+                lastM1 = now
+            end
+            task.wait()
+        end
+    end
+end

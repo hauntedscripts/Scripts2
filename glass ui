@@ -1,0 +1,738 @@
+--[[
+    GlassUI v2 - A glassmorphism-style UI library for Roblox
+    Features: Windows, Tabs, Sections, Buttons, Toggles, Sliders,
+              Dropdowns, click-to-rebind Keybinds, a pill-style
+              Keybind List panel, real background blur, spring
+              animations, and a Notification system.
+
+    USAGE:
+        local GlassUI = loadstring(game:HttpGet("PATH_TO_THIS_FILE"))()
+
+        local Window = GlassUI:CreateWindow({
+            Name = "My Script Hub",
+            Accent = Color3.fromRGB(150, 120, 255),
+        })
+
+        local Tab = Window:CreateTab("Main")
+        local Section = Tab:CreateSection("Combat")
+
+        Section:CreateToggle({
+            Name = "Auto Farm",
+            Default = false,
+            Keybind = Enum.KeyCode.F, -- shows in keybind list, click to rebind
+            Callback = function(state) print("Auto Farm:", state) end
+        })
+
+        GlassUI:Notify({
+            Title = "Loaded",
+            Content = "GlassUI has loaded successfully.",
+            Duration = 4,
+        })
+]]
+
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local Lighting = game:GetService("Lighting")
+
+-- Clean up any BlurEffect left behind by a previous run of this script.
+-- (Lighting persists across script re-executions in the same session,
+-- so an old blur from an earlier version would otherwise stay stuck on.)
+for _, fx in ipairs(Lighting:GetChildren()) do
+    if fx:IsA("BlurEffect") then
+        fx:Destroy()
+    end
+end
+
+-- ============================================================
+-- THEME
+-- ============================================================
+local Theme = {
+    Background = Color3.fromRGB(20, 20, 26),
+    Glass      = Color3.fromRGB(32, 32, 42),
+    GlassLight = Color3.fromRGB(48, 48, 62),
+    Pill       = Color3.fromRGB(40, 40, 52),
+    Stroke     = Color3.fromRGB(95, 95, 125),
+    Text       = Color3.fromRGB(238, 238, 248),
+    SubText    = Color3.fromRGB(165, 165, 185),
+    Accent     = Color3.fromRGB(150, 120, 255),
+    Success    = Color3.fromRGB(95, 220, 145),
+    Error      = Color3.fromRGB(240, 95, 95),
+    Warning    = Color3.fromRGB(240, 190, 95),
+}
+
+-- Easing presets for consistent "spring" feel
+local EASE_POP    = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local EASE_SMOOTH = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local EASE_FAST   = TweenInfo.new(0.12, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+
+local function tween(obj, props, info)
+    local t = TweenService:Create(obj, info or EASE_SMOOTH, props)
+    t:Play()
+    return t
+end
+
+local function make(class, props, children)
+    local inst = Instance.new(class)
+    for k, v in pairs(props or {}) do
+        inst[k] = v
+    end
+    for _, c in ipairs(children or {}) do
+        c.Parent = inst
+    end
+    return inst
+end
+
+-- Glass fill: translucent color + soft border + faint sheen gradient
+local function applyGlass(frame, cornerRadius, fillColor, transparency)
+    frame.BackgroundColor3 = fillColor or Theme.Glass
+    frame.BackgroundTransparency = transparency or 0.25
+    frame.BorderSizePixel = 0
+
+    make("UICorner", { CornerRadius = UDim.new(0, cornerRadius or 12), Parent = frame })
+    make("UIStroke", {
+        Color = Theme.Stroke, Thickness = 1, Transparency = 0.55, Parent = frame,
+    })
+    make("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 200, 210)),
+        }),
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.88),
+            NumberSequenceKeypoint.new(1, 0.97),
+        }),
+        Rotation = 90,
+        Parent = frame,
+    })
+    return frame
+end
+
+-- Fully rounded pill (corner radius = half height, since UICorner uses scale it's simplest as 1,0)
+local function applyPill(frame, fillColor, transparency)
+    frame.BackgroundColor3 = fillColor or Theme.Pill
+    frame.BackgroundTransparency = transparency or 0.15
+    frame.BorderSizePixel = 0
+    make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = frame })
+    make("UIStroke", { Color = Theme.Stroke, Thickness = 1, Transparency = 0.6, Parent = frame })
+    return frame
+end
+
+-- Hover/press "pop" helper: subtle scale + brighten on hover
+local function attachHover(button, baseTransparency)
+    button.MouseEnter:Connect(function()
+        tween(button, { BackgroundTransparency = math.max(baseTransparency - 0.12, 0) }, EASE_FAST)
+    end)
+    button.MouseLeave:Connect(function()
+        tween(button, { BackgroundTransparency = baseTransparency }, EASE_FAST)
+    end)
+end
+
+local function makeDraggable(handle, target)
+    local dragging, dragInput, dragStart, startPos
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = target.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    handle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            target.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+-- ============================================================
+-- ROOT GUI
+-- ============================================================
+local GlassUI = {}
+GlassUI.Flags = {}
+
+local ScreenGui = make("ScreenGui", {
+    Name = "GlassUI",
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    Parent = (gethui and gethui()) or CoreGui,
+})
+
+-- ============================================================
+-- NOTE ON BLUR:
+-- Roblox's ScreenGui is a flat 2D overlay with no "backdrop-filter"
+-- equivalent, and BlurEffect only lives on Lighting, which blurs the
+-- ENTIRE 3D viewport rather than just what's behind one frame. There's
+-- no supported way to selectively blur only the pixels behind a
+-- specific UI panel. So instead of a real (whole-screen) blur, the
+-- panels below fake the "frosted glass" look using layered
+-- transparency, a soft stroke, and a faint gradient sheen - this only
+-- affects the UI itself and never touches the rest of the screen.
+-- ============================================================
+-- NOTIFICATIONS
+-- ============================================================
+local NotifHolder = make("Frame", {
+    Name = "Notifications",
+    BackgroundTransparency = 1,
+    AnchorPoint = Vector2.new(1, 0),
+    Position = UDim2.new(1, -20, 0, 20),
+    Size = UDim2.new(0, 300, 1, -40),
+    Parent = ScreenGui,
+})
+make("UIListLayout", {
+    Padding = UDim.new(0, 10),
+    HorizontalAlignment = Enum.HorizontalAlignment.Right,
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    Parent = NotifHolder,
+})
+
+function GlassUI:Notify(config)
+    config = config or {}
+    local title = config.Title or "Notification"
+    local content = config.Content or ""
+    local duration = config.Duration or 4
+    local ntype = config.Type or "Info"
+
+    local color = Theme.Accent
+    if ntype == "Success" then color = Theme.Success
+    elseif ntype == "Error" then color = Theme.Error
+    elseif ntype == "Warning" then color = Theme.Warning end
+
+    local card = make("Frame", {
+        BackgroundColor3 = Theme.Glass,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        ClipsDescendants = true,
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1.4, 0, 0, 0),
+        Parent = NotifHolder,
+    })
+    applyGlass(card, 10, Theme.Glass, 1) -- start fully transparent, fade in
+    card.UIGradient:Destroy()
+
+    make("Frame", {
+        BackgroundColor3 = color,
+        Size = UDim2.new(0, 4, 1, 0),
+        BorderSizePixel = 0,
+        Parent = card,
+    })
+    make("UIPadding", {
+        PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10),
+        PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 12),
+        Parent = card,
+    })
+    local titleLbl = make("TextLabel", {
+        Text = title, Font = Enum.Font.GothamBold, TextSize = 14,
+        TextColor3 = Theme.Text, TextXAlignment = Enum.TextXAlignment.Left,
+        BackgroundTransparency = 1, TextTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 18), Parent = card,
+    })
+    local contentLbl = make("TextLabel", {
+        Text = content, Font = Enum.Font.Gotham, TextSize = 12,
+        TextColor3 = Theme.SubText, TextXAlignment = Enum.TextXAlignment.Left,
+        TextWrapped = true, BackgroundTransparency = 1, TextTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        Position = UDim2.new(0, 0, 0, 20), Parent = card,
+    })
+
+    tween(card, { Position = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 0.15 }, EASE_POP)
+    tween(titleLbl, { TextTransparency = 0 }, EASE_SMOOTH)
+    tween(contentLbl, { TextTransparency = 0 }, EASE_SMOOTH)
+
+    task.delay(duration, function()
+        tween(titleLbl, { TextTransparency = 1 }, EASE_FAST)
+        tween(contentLbl, { TextTransparency = 1 }, EASE_FAST)
+        local t = tween(card, { Position = UDim2.new(1.4, 0, 0, 0), BackgroundTransparency = 1 }, EASE_SMOOTH)
+        t.Completed:Wait()
+        card:Destroy()
+    end)
+end
+
+-- ============================================================
+-- KEYBIND LIST PANEL (pill style, click-to-rebind)
+-- ============================================================
+local KeybindPanel = make("Frame", {
+    Name = "KeybindList",
+    Position = UDim2.new(0, 20, 0, 20),
+    Size = UDim2.new(0, 220, 0, 0),
+    AutomaticSize = Enum.AutomaticSize.Y,
+    Visible = true,
+    Parent = ScreenGui,
+})
+applyGlass(KeybindPanel, 18, Theme.Background, 0.08)
+
+local KeybindHeader = make("Frame", {
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, 0, 0, 42),
+    Parent = KeybindPanel,
+})
+make("TextLabel", {
+    Text = "Hotkeys",
+    Font = Enum.Font.GothamBold,
+    TextSize = 15,
+    TextColor3 = Theme.Text,
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0, 16, 0, 0),
+    Size = UDim2.new(1, -50, 1, 0),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = KeybindHeader,
+})
+local collapseBtn = make("TextButton", {
+    Text = "✦",
+    Font = Enum.Font.GothamBold,
+    TextSize = 15,
+    TextColor3 = Theme.Accent,
+    BackgroundTransparency = 1,
+    Size = UDim2.new(0, 30, 0, 30),
+    Position = UDim2.new(1, -40, 0.5, -15),
+    Parent = KeybindHeader,
+})
+
+local KeybindList = make("Frame", {
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 44),
+    Size = UDim2.new(1, -24, 0, 0),
+    AutomaticSize = Enum.AutomaticSize.Y,
+    Parent = KeybindPanel,
+})
+make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = KeybindList })
+make("UIPadding", { PaddingBottom = UDim.new(0, 14), Parent = KeybindPanel })
+
+local collapsed = false
+collapseBtn.MouseButton1Click:Connect(function()
+    collapsed = not collapsed
+    KeybindList.Visible = not collapsed
+    tween(collapseBtn, { Rotation = collapsed and 90 or 0 }, EASE_POP)
+end)
+
+-- Each row: [key pill] [name pill], click the key pill to rebind
+function GlassUI:AddKeybindEntry(name, keyCode, onRebind)
+    local listening = false
+
+    local row = make("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 32),
+        Parent = KeybindList,
+    })
+    make("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        Padding = UDim.new(0, 8),
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = row,
+    })
+
+    -- Key pill (fixed-ish width, auto-sizes a bit with padding)
+    local keyPill = make("TextButton", {
+        Text = "",
+        AutomaticSize = Enum.AutomaticSize.X,
+        Size = UDim2.new(0, 0, 1, 0),
+        Parent = row,
+    })
+    applyPill(keyPill, Theme.Pill, 0.15)
+    make("UIPadding", {
+        PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14), Parent = keyPill,
+    })
+    local keyLabel = make("TextLabel", {
+        Text = keyCode.Name,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextColor3 = Theme.Accent,
+        BackgroundTransparency = 1,
+        AutomaticSize = Enum.AutomaticSize.X,
+        Size = UDim2.new(0, 0, 1, 0),
+        Parent = keyPill,
+    })
+
+    -- Name pill (auto width, fills remaining feel via padding)
+    local namePill = make("Frame", {
+        AutomaticSize = Enum.AutomaticSize.X,
+        Size = UDim2.new(0, 0, 1, 0),
+        Parent = row,
+    })
+    applyPill(namePill, Theme.Pill, 0.15)
+    make("UIPadding", {
+        PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), Parent = namePill,
+    })
+    make("TextLabel", {
+        Text = name,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 13,
+        TextColor3 = Theme.Text,
+        BackgroundTransparency = 1,
+        AutomaticSize = Enum.AutomaticSize.X,
+        Size = UDim2.new(0, 0, 1, 0),
+        Parent = namePill,
+    })
+
+    attachHover(keyPill, 0.15)
+
+    keyPill.MouseButton1Click:Connect(function()
+        if listening then return end
+        listening = true
+        keyLabel.Text = "..."
+        tween(keyPill.UIStroke, { Color = Theme.Accent, Transparency = 0.1 }, EASE_FAST)
+
+        local conn
+        conn = UserInputService.InputBegan:Connect(function(input, gpe)
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            conn:Disconnect()
+            keyCode = input.KeyCode
+            keyLabel.Text = keyCode.Name
+            listening = false
+            tween(keyPill.UIStroke, { Color = Theme.Stroke, Transparency = 0.6 }, EASE_FAST)
+            tween(keyPill, { Size = keyPill.Size }, EASE_POP) -- little pop confirm
+            if onRebind then onRebind(keyCode) end
+        end)
+    end)
+
+    return row
+end
+
+-- ============================================================
+-- WINDOW / TAB / SECTION
+-- ============================================================
+function GlassUI:CreateWindow(config)
+    config = config or {}
+    local windowName = config.Name or "GlassUI"
+    if config.Accent then Theme.Accent = config.Accent end
+    local size = config.Size or UDim2.new(0, 560, 0, 380)
+
+    local Window = {}
+    Window.Tabs = {}
+
+    local Main = make("Frame", {
+        Name = "Main",
+        Size = UDim2.new(0, size.X.Offset, 0, size.Y.Offset),
+        Position = UDim2.new(0.5, -size.X.Offset / 2, 0.5, -size.Y.Offset / 2),
+        Parent = ScreenGui,
+    })
+    applyGlass(Main, 16, Theme.Background, 0.05)
+    Main.ClipsDescendants = true
+
+    -- pop-in on load
+    Main.Size = UDim2.new(0, size.X.Offset, 0, 0)
+    tween(Main, { Size = size }, EASE_POP)
+
+    local TopBar = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 46), Parent = Main })
+    make("Frame", {
+        BackgroundColor3 = Theme.Stroke, BackgroundTransparency = 0.7, BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, 0), Parent = TopBar,
+    })
+    make("TextLabel", {
+        Text = windowName, Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = Theme.Text,
+        TextXAlignment = Enum.TextXAlignment.Left, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 16, 0, 0), Size = UDim2.new(1, -80, 1, 0), Parent = TopBar,
+    })
+
+    local closeBtn = make("TextButton", {
+        Text = "✕", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = Theme.SubText,
+        BackgroundTransparency = 1, Size = UDim2.new(0, 32, 0, 32), Position = UDim2.new(1, -40, 0, 7),
+        Parent = TopBar,
+    })
+    closeBtn.MouseEnter:Connect(function() tween(closeBtn, { TextColor3 = Theme.Error }, EASE_FAST) end)
+    closeBtn.MouseLeave:Connect(function() tween(closeBtn, { TextColor3 = Theme.SubText }, EASE_FAST) end)
+    closeBtn.MouseButton1Click:Connect(function()
+        local t = tween(Main, { Size = UDim2.new(0, size.X.Offset, 0, 0) }, EASE_SMOOTH)
+        t.Completed:Wait()
+        ScreenGui.Enabled = false
+    end)
+
+    local minBtn = make("TextButton", {
+        Text = "—", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = Theme.SubText,
+        BackgroundTransparency = 1, Size = UDim2.new(0, 32, 0, 32), Position = UDim2.new(1, -72, 0, 7),
+        Parent = TopBar,
+    })
+    attachHover(minBtn, 1)
+    local minimized = false
+    minBtn.MouseButton1Click:Connect(function()
+        minimized = not minimized
+        if minimized then
+            tween(Main, { Size = UDim2.new(0, size.X.Offset, 0, 46) }, EASE_SMOOTH)
+        else
+            tween(Main, { Size = size }, EASE_POP)
+        end
+    end)
+
+    makeDraggable(TopBar, Main)
+
+    local TabBar = make("Frame", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 46), Size = UDim2.new(0, 140, 1, -46),
+        Parent = Main,
+    })
+    make("Frame", {
+        BackgroundColor3 = Theme.Stroke, BackgroundTransparency = 0.7, BorderSizePixel = 0,
+        Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, 0, 0, 0), Parent = TabBar,
+    })
+    local TabList = make("Frame", {
+        BackgroundTransparency = 1, Size = UDim2.new(1, -10, 1, -10), Position = UDim2.new(0, 5, 0, 5),
+        Parent = TabBar,
+    })
+    make("UIListLayout", { Padding = UDim.new(0, 4), Parent = TabList })
+
+    local ContentArea = make("Frame", {
+        BackgroundTransparency = 1, Position = UDim2.new(0, 140, 0, 46), Size = UDim2.new(1, -140, 1, -46),
+        Parent = Main,
+    })
+
+    function Window:CreateTab(name)
+        local Tab = {}
+
+        local tabBtn = make("TextButton", {
+            Text = "  " .. name, Font = Enum.Font.GothamMedium, TextSize = 14, TextColor3 = Theme.SubText,
+            TextXAlignment = Enum.TextXAlignment.Left, BackgroundTransparency = 0.4, BackgroundColor3 = Theme.Glass,
+            Size = UDim2.new(1, 0, 0, 32), Parent = TabList,
+        })
+        make("UICorner", { CornerRadius = UDim.new(0, 8), Parent = tabBtn })
+
+        local Page = make("ScrollingFrame", {
+            BackgroundTransparency = 1, Size = UDim2.new(1, -10, 1, -10), Position = UDim2.new(0, 5, 0, 5),
+            CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.Accent, Visible = false, Parent = ContentArea,
+        })
+        make("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Page })
+
+        local isFirst = (#Window.Tabs == 0)
+        Page.Visible = isFirst
+        tabBtn.BackgroundTransparency = isFirst and 0.1 or 1
+        tabBtn.TextColor3 = isFirst and Theme.Text or Theme.SubText
+
+        tabBtn.MouseButton1Click:Connect(function()
+            for _, t in ipairs(Window.Tabs) do
+                t.Page.Visible = false
+                tween(t.Button, { BackgroundTransparency = 1, TextColor3 = Theme.SubText }, EASE_FAST)
+            end
+            Page.Visible = true
+            tween(tabBtn, { BackgroundTransparency = 0.1, TextColor3 = Theme.Text }, EASE_FAST)
+        end)
+
+        table.insert(Window.Tabs, { Page = Page, Button = tabBtn })
+
+        function Tab:CreateSection(name)
+            local Section = {}
+
+            local SecFrame = make("Frame", {
+                BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
+                AutomaticSize = Enum.AutomaticSize.Y, Parent = Page,
+            })
+            make("TextLabel", {
+                Text = name, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Theme.SubText,
+                BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20),
+                TextXAlignment = Enum.TextXAlignment.Left, Parent = SecFrame,
+            })
+            local Holder = make("Frame", {
+                BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 22),
+                Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = SecFrame,
+            })
+            make("UIListLayout", { Padding = UDim.new(0, 6), Parent = Holder })
+
+            local function baseCard(height)
+                local card = make("Frame", { Size = UDim2.new(1, 0, 0, height or 34), Parent = Holder })
+                applyGlass(card, 8, Theme.Glass, 0.35)
+                return card
+            end
+
+            function Section:CreateButton(cfg)
+                cfg = cfg or {}
+                local card = baseCard(34)
+                local btn = make("TextButton", {
+                    Text = cfg.Name or "Button", Font = Enum.Font.GothamMedium, TextSize = 13,
+                    TextColor3 = Theme.Text, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
+                    Parent = card,
+                })
+                attachHover(card, 0.35)
+                btn.MouseButton1Click:Connect(function()
+                    tween(card, { BackgroundTransparency = 0.05 }, EASE_FAST)
+                    task.wait(0.1)
+                    tween(card, { BackgroundTransparency = 0.35 }, EASE_SMOOTH)
+                    if cfg.Callback then cfg.Callback() end
+                end)
+                return btn
+            end
+
+            function Section:CreateToggle(cfg)
+                cfg = cfg or {}
+                local state = cfg.Default or false
+                local boundKey = cfg.Keybind
+                local card = baseCard(34)
+
+                make("TextLabel", {
+                    Text = cfg.Name or "Toggle", Font = Enum.Font.GothamMedium, TextSize = 13,
+                    TextColor3 = Theme.Text, BackgroundTransparency = 1, Position = UDim2.new(0, 12, 0, 0),
+                    Size = UDim2.new(1, -60, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, Parent = card,
+                })
+
+                local switch = make("Frame", {
+                    BackgroundColor3 = state and Theme.Accent or Theme.GlassLight,
+                    Position = UDim2.new(1, -42, 0.5, -9), Size = UDim2.new(0, 32, 0, 18), Parent = card,
+                })
+                make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = switch })
+                local knob = make("Frame", {
+                    BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+                    Position = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7),
+                    Size = UDim2.new(0, 14, 0, 14), Parent = switch,
+                })
+                make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = knob })
+
+                local click = make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), Parent = card })
+
+                local function set(newState)
+                    state = newState
+                    tween(switch, { BackgroundColor3 = state and Theme.Accent or Theme.GlassLight }, EASE_SMOOTH)
+                    tween(knob, { Position = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7) }, EASE_POP)
+                    if cfg.Flag then GlassUI.Flags[cfg.Flag] = state end
+                    if cfg.Callback then cfg.Callback(state) end
+                end
+
+                click.MouseButton1Click:Connect(function() set(not state) end)
+
+                if boundKey then
+                    GlassUI:AddKeybindEntry(cfg.Name, boundKey, function(newKey)
+                        boundKey = newKey
+                    end)
+                    UserInputService.InputBegan:Connect(function(input, gpe)
+                        if gpe then return end
+                        if input.KeyCode == boundKey then set(not state) end
+                    end)
+                end
+
+                if cfg.Default then set(true) end
+                return { Set = set }
+            end
+
+            function Section:CreateSlider(cfg)
+                cfg = cfg or {}
+                local min, max = cfg.Min or 0, cfg.Max or 100
+                local value = cfg.Default or min
+                local card = baseCard(44)
+
+                local label = make("TextLabel", {
+                    Text = (cfg.Name or "Slider") .. ": " .. tostring(value), Font = Enum.Font.GothamMedium,
+                    TextSize = 13, TextColor3 = Theme.Text, BackgroundTransparency = 1,
+                    Position = UDim2.new(0, 12, 0, 4), Size = UDim2.new(1, -24, 0, 16),
+                    TextXAlignment = Enum.TextXAlignment.Left, Parent = card,
+                })
+
+                local track = make("Frame", {
+                    BackgroundColor3 = Theme.GlassLight, Position = UDim2.new(0, 12, 0, 28),
+                    Size = UDim2.new(1, -24, 0, 6), Parent = card,
+                })
+                make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = track })
+                local fill = make("Frame", {
+                    BackgroundColor3 = Theme.Accent, Size = UDim2.new((value - min) / (max - min), 0, 1, 0),
+                    Parent = track,
+                })
+                make("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fill })
+
+                local dragging = false
+                track.InputBegan:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton1
+                        or input.UserInputType == Enum.UserInputType.Touch then
+                        dragging = true
+                    end
+                end)
+                UserInputService.InputEnded:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton1
+                        or input.UserInputType == Enum.UserInputType.Touch then
+                        dragging = false
+                    end
+                end)
+                UserInputService.InputChanged:Connect(function(input)
+                    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+                        or input.UserInputType == Enum.UserInputType.Touch) then
+                        local rel = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+                        value = math.floor(min + (max - min) * rel)
+                        tween(fill, { Size = UDim2.new(rel, 0, 1, 0) }, EASE_FAST)
+                        label.Text = (cfg.Name or "Slider") .. ": " .. tostring(value)
+                        if cfg.Flag then GlassUI.Flags[cfg.Flag] = value end
+                        if cfg.Callback then cfg.Callback(value) end
+                    end
+                end)
+
+                return { Set = function(v) value = v end }
+            end
+
+            function Section:CreateDropdown(cfg)
+                cfg = cfg or {}
+                local options = cfg.Options or {}
+                local selected = cfg.Default or options[1]
+                local open = false
+                local card = baseCard(34)
+                card.ClipsDescendants = true
+
+                make("TextLabel", {
+                    Text = cfg.Name or "Dropdown", Font = Enum.Font.GothamMedium, TextSize = 13,
+                    TextColor3 = Theme.Text, BackgroundTransparency = 1, Position = UDim2.new(0, 12, 0, 0),
+                    Size = UDim2.new(0.5, 0, 0, 34), TextXAlignment = Enum.TextXAlignment.Left, Parent = card,
+                })
+                local valueLabel = make("TextLabel", {
+                    Text = tostring(selected) .. " ▾", Font = Enum.Font.GothamMedium, TextSize = 13,
+                    TextColor3 = Theme.Accent, BackgroundTransparency = 1, Position = UDim2.new(0.5, 0, 0, 0),
+                    Size = UDim2.new(0.5, -12, 0, 34), TextXAlignment = Enum.TextXAlignment.Right, Parent = card,
+                })
+                local optList = make("Frame", {
+                    BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 36),
+                    Size = UDim2.new(1, 0, 0, #options * 26), Parent = card,
+                })
+                make("UIListLayout", { Padding = UDim.new(0, 2), Parent = optList })
+
+                for _, opt in ipairs(options) do
+                    local optBtn = make("TextButton", {
+                        Text = tostring(opt), Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = Theme.SubText,
+                        BackgroundTransparency = 1, Size = UDim2.new(1, -12, 0, 24), Position = UDim2.new(0, 12, 0, 0),
+                        TextXAlignment = Enum.TextXAlignment.Left, Parent = optList,
+                    })
+                    optBtn.MouseEnter:Connect(function() tween(optBtn, { TextColor3 = Theme.Text }, EASE_FAST) end)
+                    optBtn.MouseLeave:Connect(function() tween(optBtn, { TextColor3 = Theme.SubText }, EASE_FAST) end)
+                    optBtn.MouseButton1Click:Connect(function()
+                        selected = opt
+                        valueLabel.Text = tostring(selected) .. " ▾"
+                        if cfg.Flag then GlassUI.Flags[cfg.Flag] = selected end
+                        if cfg.Callback then cfg.Callback(selected) end
+                        open = false
+                        tween(card, { Size = UDim2.new(1, 0, 0, 34) }, EASE_SMOOTH)
+                    end)
+                end
+
+                local click = make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 34), ZIndex = 2, Parent = card })
+                click.MouseButton1Click:Connect(function()
+                    open = not open
+                    if open then
+                        tween(card, { Size = UDim2.new(1, 0, 0, 36 + #options * 26) }, EASE_POP)
+                    else
+                        tween(card, { Size = UDim2.new(1, 0, 0, 34) }, EASE_SMOOTH)
+                    end
+                end)
+
+                return { Set = function(v) selected = v; valueLabel.Text = tostring(v) .. " ▾" end }
+            end
+
+            return Section
+        end
+
+        return Tab
+    end
+
+    return Window
+end
+
+return GlassUI

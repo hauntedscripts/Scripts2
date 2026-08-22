@@ -1,0 +1,469 @@
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/neaxusxgod-png/INS-ui/main/uilib.min.lua"))() or INSui
+local win = lib:CreateWindow({
+    title = "haunted",
+    subtitle = "triggerbot & visuals",
+    size = Vector2.new(550, 480),
+    menuKey = "p",
+})
+
+win:AddSettingsTab("cog")
+
+local tab = win:Tab("triggerbots", "target")
+local left = tab:Section("Automation", "Left")
+local right = tab:Section("Visuals", "Right")
+local colors = tab:Section("Colors", "Right")
+
+local cfg = {
+    on = false,
+    fill = true,
+    mode = 1,
+    csize = 15,
+    dobots = true,
+    inner = 14.5,
+    outer = 16,
+    csegs = 32,
+    ssegs = 8,
+    fps = 0.001,
+    cdelay = 0.05,
+    i2 = 14.5 * 14.5,
+    o2 = 16 * 16,
+}
+
+local col = {
+    fc = Color3.fromRGB(255, 80, 80),
+    fa = 0.5,
+    rc = Color3.fromRGB(255, 0, 0),
+    th = 1.5,
+    hrc = Color3.fromRGB(0, 255, 0),
+    hfc = Color3.fromRGB(160, 255, 140),
+    hfa = 0.5,
+}
+
+local plrs = game:GetService("Players")
+local me = plrs.LocalPlayer
+local bots = game.Workspace:FindFirstChild("Bots") or game.Workspace
+local mname = me.Name
+
+local ol, il, tr = {}, {}, {}
+local clines, ctris = {}, {}
+local slines, stris = {}, {}
+local sverts, sfaces, sedges = {}, {}, {}
+
+local function mksphere()
+    sverts, sfaces, sedges = {}, {}, {}
+    local n = math.clamp(cfg.ssegs, 4, 16)
+    for i = 0, n do
+        local t = i * math.pi / n
+        local y = math.cos(t)
+        local st = math.sin(t)
+        for j = 0, n - 1 do
+            local p = j * 2 * math.pi / n
+            sverts[#sverts + 1] = Vector3.new(st * math.cos(p), y, st * math.sin(p))
+        end
+    end
+    local eset = {}
+    local function ae(a, b)
+        local k = a < b and (a .. "_" .. b) or (b .. "_" .. a)
+        if not eset[k] then
+            eset[k] = true
+            sedges[#sedges + 1] = {a, b}
+        end
+    end
+    for i = 0, n - 1 do
+        for j = 0, n - 1 do
+            local nj = (j + 1) % n
+            local a = i * n + j + 1
+            local b = i * n + nj + 1
+            local c = (i + 1) * n + j + 1
+            local d = (i + 1) * n + nj + 1
+            sfaces[#sfaces + 1] = {a, c, d}
+            sfaces[#sfaces + 1] = {a, d, b}
+            ae(a, c) ae(c, d) ae(d, a) ae(d, b) ae(b, a)
+        end
+    end
+end
+mksphere()
+
+local function mkdraw()
+    for _, v in next, ol do pcall(v.Remove, v) end
+    for _, v in next, il do pcall(v.Remove, v) end
+    for _, v in next, tr do pcall(v.Remove, v) end
+    for _, v in next, clines do pcall(v.Remove, v) end
+    for _, v in next, ctris do pcall(v.Remove, v) end
+    for _, v in next, slines do pcall(v.Remove, v) end
+    for _, v in next, stris do pcall(v.Remove, v) end
+    ol, il, tr, clines, ctris, slines, stris = {}, {}, {}, {}, {}, {}, {}
+
+    if cfg.mode == 1 then
+        for i = 1, cfg.csegs do
+            local a = Drawing.new("Line")
+            a.Thickness = col.th
+            a.Color = col.rc
+            a.Visible = false
+            a.Transparency = 1
+            ol[i] = a
+            local b = Drawing.new("Line")
+            b.Thickness = col.th
+            b.Color = col.rc
+            b.Visible = false
+            b.Transparency = 1
+            il[i] = b
+            local t1 = Drawing.new("Triangle")
+            t1.Color = col.fc
+            t1.Filled = true
+            t1.Visible = false
+            t1.Transparency = col.fa
+            tr[i * 2 - 1] = t1
+            local t2 = Drawing.new("Triangle")
+            t2.Color = col.fc
+            t2.Filled = true
+            t2.Visible = false
+            t2.Transparency = col.fa
+            tr[i * 2] = t2
+        end
+    elseif cfg.mode == 2 then
+        for i = 1, 12 do
+            local l = Drawing.new("Line")
+            l.Thickness = col.th
+            l.Color = col.rc
+            l.Visible = false
+            l.Transparency = 1
+            clines[i] = l
+        end
+        for i = 1, 12 do
+            local t = Drawing.new("Triangle")
+            t.Color = col.fc
+            t.Filled = true
+            t.Visible = false
+            t.Transparency = col.fa
+            ctris[i] = t
+        end
+    elseif cfg.mode == 3 then
+        for i = 1, #sedges do
+            local l = Drawing.new("Line")
+            l.Thickness = col.th
+            l.Color = col.rc
+            l.Visible = false
+            l.Transparency = 1
+            slines[i] = l
+        end
+        for i = 1, #sfaces do
+            local t = Drawing.new("Triangle")
+            t.Color = col.fc
+            t.Filled = true
+            t.Visible = false
+            t.Transparency = col.fa
+            stris[i] = t
+        end
+    end
+end
+
+local cs, sn = {}, {}
+local op, ip = {}, {}
+
+local function mkmath()
+    cs, sn, op, ip = {}, {}, {}, {}
+    if cfg.mode ~= 1 then return end
+    local step = (2 * math.pi) / cfg.csegs
+    for i = 1, cfg.csegs do
+        local a = step * (i - 1)
+        cs[i] = math.cos(a)
+        sn[i] = math.sin(a)
+        op[i] = Vector3.new(0, 0, 0)
+        ip[i] = Vector3.new(0, 0, 0)
+    end
+end
+
+mkdraw()
+mkmath()
+
+local function scr(p)
+    local ok, s, vis = pcall(WorldToScreen, p)
+    if ok and vis then return s end
+end
+
+local function draw(pos, hit)
+    local px, py, pz = pos.X, pos.Y, pos.Z
+    local rc = hit and col.hrc or col.rc
+    local fc = hit and col.hfc or col.fc
+    local fa = hit and col.hfa or col.fa
+
+    if cfg.mode == 1 then
+        for i = 1, cfg.csegs do
+            op[i] = Vector3.new(px + cs[i] * cfg.outer, py, pz + sn[i] * cfg.outer)
+            ip[i] = Vector3.new(px + cs[i] * cfg.inner, py, pz + sn[i] * cfg.inner)
+        end
+        local os, is = {}, {}
+        for i = 1, cfg.csegs do
+            os[i] = scr(op[i])
+            is[i] = scr(ip[i])
+        end
+        for i = 1, cfg.csegs do
+            local j = (i % cfg.csegs) + 1
+            local o1, o2 = os[i], os[j]
+            local i1, i2 = is[i], is[j]
+            if o1 and o2 then
+                ol[i].From, ol[i].To, ol[i].Color, ol[i].Visible = o1, o2, rc, true
+            else ol[i].Visible = false end
+            if i1 and i2 then
+                il[i].From, il[i].To, il[i].Color, il[i].Visible = i1, i2, rc, true
+            else il[i].Visible = false end
+            local t1, t2 = tr[i * 2 - 1], tr[i * 2]
+            if cfg.fill and o1 and o2 and i1 and i2 then
+                t1.PointA, t1.PointB, t1.PointC = o1, o2, i1
+                t1.Color, t1.Transparency, t1.Visible = fc, fa, true
+                t2.PointA, t2.PointB, t2.PointC = o2, i2, i1
+                t2.Color, t2.Transparency, t2.Visible = fc, fa, true
+            else t1.Visible = false; t2.Visible = false end
+        end
+
+    elseif cfg.mode == 2 then
+        local s = cfg.csize
+        local v = {
+            Vector3.new(px - s, py - s, pz - s),
+            Vector3.new(px + s, py - s, pz - s),
+            Vector3.new(px + s, py + s, pz - s),
+            Vector3.new(px - s, py + s, pz - s),
+            Vector3.new(px - s, py - s, pz + s),
+            Vector3.new(px + s, py - s, pz + s),
+            Vector3.new(px + s, py + s, pz + s),
+            Vector3.new(px - s, py + s, pz + s),
+        }
+        local sv = {}
+        for idx, pt in ipairs(v) do sv[idx] = scr(pt) end
+        local edges = {
+            {1,2},{2,3},{3,4},{4,1},
+            {5,6},{6,7},{7,8},{8,5},
+            {1,5},{2,6},{3,7},{4,8},
+        }
+        for i, e in ipairs(edges) do
+            local p1, p2 = sv[e[1]], sv[e[2]]
+            if p1 and p2 then
+                clines[i].From, clines[i].To, clines[i].Color, clines[i].Visible = p1, p2, rc, true
+            else clines[i].Visible = false end
+        end
+        local faces = {
+            {1,2,3},{1,3,4},{5,6,7},{5,7,8},
+            {1,4,8},{1,8,5},{2,3,7},{2,7,6},
+            {4,3,7},{4,7,8},{1,2,6},{1,6,5},
+        }
+        for i, f in ipairs(faces) do
+            local p1, p2, p3 = sv[f[1]], sv[f[2]], sv[f[3]]
+            if cfg.fill and p1 and p2 and p3 then
+                ctris[i].PointA, ctris[i].PointB, ctris[i].PointC = p1, p2, p3
+                ctris[i].Color, ctris[i].Transparency, ctris[i].Visible = fc, fa, true
+            else ctris[i].Visible = false end
+        end
+
+    elseif cfg.mode == 3 then
+        local cam = workspace.CurrentCamera
+        local cp = Vector3.new(0, 10, 0)
+        if cam then
+            local ok, cf = pcall(function() return cam.CFrame end)
+            if ok and cf then cp = cf.Position end
+        end
+        local wv = {}
+        for i, u in ipairs(sverts) do wv[i] = pos + u * cfg.outer end
+        local sv = {}
+        for i, w in ipairs(wv) do sv[i] = scr(w) end
+        for i, e in ipairs(sedges) do
+            local p1, p2 = sv[e[1]], sv[e[2]]
+            if p1 and p2 then
+                slines[i].From, slines[i].To, slines[i].Color, slines[i].Visible = p1, p2, rc, true
+            else slines[i].Visible = false end
+        end
+        local sf = {}
+        for idx, f in ipairs(sfaces) do
+            local a, b, c = wv[f[1]], wv[f[2]], wv[f[3]]
+            sf[#sf + 1] = {f = f, d = ((a + b + c) / 3 - cp).Magnitude}
+        end
+        table.sort(sf, function(a, b) return a.d > b.d end)
+        for i, item in ipairs(sf) do
+            local f = item.f
+            local p1, p2, p3 = sv[f[1]], sv[f[2]], sv[f[3]]
+            if cfg.fill and p1 and p2 and p3 then
+                stris[i].PointA, stris[i].PointB, stris[i].PointC = p1, p2, p3
+                stris[i].Color, stris[i].Transparency, stris[i].Visible = fc, fa, true
+            else stris[i].Visible = false end
+        end
+    end
+end
+
+local function hide()
+    for _, v in next, ol do v.Visible = false end
+    for _, v in next, il do v.Visible = false end
+    for _, v in next, tr do v.Visible = false end
+    for _, v in next, clines do v.Visible = false end
+    for _, v in next, ctris do v.Visible = false end
+    for _, v in next, slines do v.Visible = false end
+    for _, v in next, stris do v.Visible = false end
+end
+
+local cache = {}
+local ctimer = 0
+
+local function rebuild()
+    cache = {}
+    local mc = me.Character
+    for _, p in next, plrs:GetPlayers() do
+        if p ~= me and p.Character and p.Character ~= mc then
+            cache[#cache + 1] = p.Character
+        end
+    end
+    if cfg.dobots then
+        for _, b in next, bots:GetChildren() do
+            if b:IsA("Model") and b ~= mc and b.Name ~= mname then
+                cache[#cache + 1] = b
+            end
+        end
+    end
+end
+rebuild()
+
+left:Toggle("Enable Clicker", false, function(v)
+    cfg.on = v
+    if not v then hide() end
+end)
+
+left:Toggle("Detect Bots", true, function(v)
+    cfg.dobots = v
+    rebuild()
+end)
+
+left:Slider("Click Delay", 0.05, 0.01, 0.001, 1.0, "s", function(v)
+    cfg.cdelay = v
+end)
+
+left:Slider("Circle Segments", 32, 2, 8, 64, "", function(v)
+    cfg.csegs = v
+    if cfg.mode == 1 then mkdraw(); mkmath() end
+end)
+
+left:Slider("Sphere Segments", 8, 1, 4, 16, "", function(v)
+    cfg.ssegs = v
+    mksphere()
+    if cfg.mode == 3 then mkdraw() end
+end)
+
+left:Slider("Loop Wait Delay", 0.001, 0.001, 0.0001, 0.1, "s", function(v)
+    cfg.fps = v
+end)
+
+right:Toggle("Show Fill", true, function(v)
+    cfg.fill = v
+    if not v then
+        for _, t in next, tr do t.Visible = false end
+        for _, t in next, ctris do t.Visible = false end
+        for _, t in next, stris do t.Visible = false end
+    end
+end)
+
+right:Dropdown("Shape Mode", {"Circle"}, {"Circle", "3D Cube", "Sphere"}, false, function(v)
+    if v[1] == "Circle" then cfg.mode = 1
+    elseif v[1] == "3D Cube" then cfg.mode = 2
+    elseif v[1] == "Sphere" then cfg.mode = 3 end
+    mkdraw()
+    mkmath()
+end)
+
+right:Slider("Inner Radius", 14.5, 0.5, 0, 100.0, " studs", function(v)
+    cfg.inner = v
+    cfg.i2 = v * v
+end)
+
+right:Slider("Outer Radius", 16.0, 0.5, 0, 100.0, " studs", function(v)
+    cfg.outer = v
+    cfg.o2 = v * v
+end)
+
+right:Slider("Cube Size", 15, 0.5, 0, 100, " studs", function(v)
+    cfg.csize = v
+end)
+
+colors:Colorpicker("Regular Line Color", Color3.fromRGB(255, 0, 0), function(c, a)
+    col.rc = c
+end, 1)
+
+colors:Colorpicker("Regular Fill Color", Color3.fromRGB(255, 80, 80), function(c, a)
+    col.fc = c
+    col.fa = a
+    for _, t in next, tr do t.Transparency = col.fa end
+    for _, t in next, ctris do t.Transparency = col.fa end
+    for _, t in next, stris do t.Transparency = col.fa end
+end, 0.5)
+
+colors:Colorpicker("Hit Line Color", Color3.fromRGB(0, 255, 0), function(c, a)
+    col.hrc = c
+end, 1)
+
+colors:Colorpicker("Hit Fill Color", Color3.fromRGB(160, 255, 140), function(c, a)
+    col.hfc = c
+    col.hfa = a
+end, 0.5)
+
+local running = true
+left:Button("Unload Script", function()
+    lib:Dialog({
+        title = "Unload?",
+        text = "Remove the proximity suite script?",
+        confirm = "Unload",
+        onConfirm = function()
+            running = false
+            lib:Destroy()
+        end,
+    })
+end):SetRisk()
+
+local last = 0
+task.spawn(function()
+    while running do
+        task.wait(cfg.fps)
+        if not cfg.on then
+            hide()
+            task.wait(0.1)
+            continue
+        end
+        local char = me.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then hide(); continue end
+        local now = os.clock()
+        if now - ctimer >= 5 then
+            rebuild()
+            ctimer = now
+        end
+        local pos = hrp.Position
+        local hit = false
+        if cfg.mode == 1 or cfg.mode == 3 then
+            for _, c in next, cache do
+                if not c then continue end
+                if c.Name == mname then continue end
+                local h = c:FindFirstChild("HumanoidRootPart")
+                if not h then continue end
+                local dx = h.Position.X - pos.X
+                local dy = h.Position.Y - pos.Y
+                local dz = h.Position.Z - pos.Z
+                local d2 = dx * dx + dy * dy + dz * dz
+                if d2 >= cfg.i2 and d2 <= cfg.o2 then hit = true; break end
+            end
+        elseif cfg.mode == 2 then
+            for _, c in next, cache do
+                if not c then continue end
+                if c.Name == mname then continue end
+                local h = c:FindFirstChild("HumanoidRootPart")
+                if not h then continue end
+                local dx = math.abs(h.Position.X - pos.X)
+                local dy = math.abs(h.Position.Y - pos.Y)
+                local dz = math.abs(h.Position.Z - pos.Z)
+                if dx <= cfg.csize and dy <= cfg.csize and dz <= cfg.csize then hit = true; break end
+            end
+        end
+        draw(pos, hit)
+        if hit then
+            if now - last >= cfg.cdelay then
+                mouse1click()
+                last = now
+            end
+        end
+    end
+    hide()
+end)

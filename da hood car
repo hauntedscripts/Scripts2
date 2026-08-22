@@ -1,0 +1,825 @@
+if not api then return end
+
+local tab = api:AddTab("🚓")
+
+local vehiclesFolder = game.Workspace:FindFirstChild("Vehicles")
+local carSupported   = vehiclesFolder ~= nil
+
+local BoostBox, MovementBox, FunBox, TeleportBox
+if carSupported then
+    BoostBox    = tab:AddLeftGroupbox("Boost")
+    MovementBox = tab:AddLeftGroupbox("Movement")
+    FunBox      = tab:AddRightGroupbox("Fun")
+    TeleportBox = tab:AddRightGroupbox("Teleport")
+end
+local PlayerBox = tab:AddRightGroupbox("Player")
+
+if not carSupported then
+    local noticeBox = tab:AddLeftGroupbox("Notice")
+    noticeBox:AddLabel("Car features not available —\nno Vehicles folder detected in this game.", true)
+end
+
+local Players     = game:GetService("Players")
+local RunService  = game:GetService("RunService")
+local UIS         = game:GetService("UserInputService")
+local localPlayer = Players.LocalPlayer
+
+local boostInterval   = 0.05
+local boostForce      = 200
+local instantForce    = 200
+local boostEnabled    = false
+local floatEnabled    = false
+local floatY          = nil
+local gravityEnabled  = false
+local gravityStrength = 50
+local noFlipEnabled   = false
+local bounceEnabled   = false
+local bounceForce     = 50
+local spinEnabled     = false
+local spinSpeed       = 50
+local freezeEnabled   = false
+local frozenCFrame    = nil
+local playerBhopEnabled = false
+local autoBhopEnabled   = false
+local speedLimitEnabled = false
+local speedLimitValue   = 200
+
+local bhopGroundSpeed  = 50
+local bhopAirSpeed     = 5
+local bhopGroundAccel  = 50
+local bhopAirAccel     = 800
+local bhopFriction     = 5
+local bhopJumpPower    = 50
+local bhopMaxSpeed     = 10000
+local bhopDisableAnims = true
+local bhopFirstPerson  = true
+
+local currentVectorForce  = nil
+local currentAttachment   = nil
+local boostedCar          = nil
+local wasNoFlip           = false
+local wasSpin             = false
+local selectedCarName     = nil
+local TeleportCarDropdown = nil
+
+local function getMainPart(vehicle)
+    if vehicle:IsA("BasePart") then return vehicle end
+    for _, part in ipairs(vehicle:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then return part end
+    end
+end
+
+local function getMyDrivenCar()
+    for _, vehicle in ipairs(vehiclesFolder:GetChildren()) do
+        local driver = vehicle:FindFirstChild("Driver")
+        if driver and driver:IsA("ObjectValue") then
+            local playerChar = game.Workspace.Players:FindFirstChild(localPlayer.Name)
+            if driver.Value == playerChar then return vehicle end
+        end
+    end
+    return nil
+end
+
+local function cleanup()
+    if currentVectorForce then currentVectorForce:Destroy(); currentVectorForce = nil end
+    if currentAttachment  then currentAttachment:Destroy();  currentAttachment  = nil end
+    boostedCar = nil
+end
+
+local function setupBoost(vehicle)
+    local mp = getMainPart(vehicle); if not mp then return false end
+    local att = Instance.new("Attachment"); att.Name = "BoostAttachment"; att.Parent = mp
+    local vf  = Instance.new("VectorForce")
+    vf.Name = "BoostForce"; vf.Attachment0 = att
+    vf.RelativeTo = Enum.ActuatorRelativeTo.World
+    vf.Force = Vector3.new(0, 0, 0); vf.Parent = att
+    currentAttachment = att; currentVectorForce = vf; boostedCar = vehicle
+    return true
+end
+
+local function getCarList()
+    local cars = {}
+    for _, v in ipairs(vehiclesFolder:GetChildren()) do cars[#cars + 1] = v.Name end
+    if #cars == 0 then cars[#cars + 1] = "No cars" end
+    return cars
+end
+
+local function startBounceLoop()
+    task.spawn(function()
+        while bounceEnabled do
+            local car = getMyDrivenCar()
+            if car then
+                car.AssemblyLinearVelocity = Vector3.new(
+                    car.AssemblyLinearVelocity.X, bounceForce, car.AssemblyLinearVelocity.Z)
+            end
+            task.wait(1.5)
+        end
+    end)
+end
+
+if carSupported then
+
+local BoostToggle = BoostBox:AddToggle("BoostToggle", {
+    Text     = "Engine Boost",
+    Default  = false,
+    Tooltip  = "Continuously pushes the car in its current direction",
+    Callback = function(v)
+        boostEnabled = v
+        if not boostEnabled then cleanup() end
+    end,
+})
+BoostToggle:AddKeyPicker("BoostKeybind", { Text = "Boost", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+BoostBox:AddSlider("BoostForceSlider", {
+    Text     = "Boost Force",
+    Default  = 200,
+    Min      = 0,
+    Max      = 750,
+    Rounding = 0,
+    Suffix   = "N",
+    Callback = function(v) boostForce = v end,
+})
+
+BoostBox:AddDivider()
+
+local function doInstantBoost()
+    local car = getMyDrivenCar(); if not car then return end
+    local mp  = getMainPart(car); if not mp then return end
+    local vel = mp.AssemblyLinearVelocity
+    local fv  = Vector3.new(vel.X, 0, vel.Z)
+    local dir = fv.Magnitude > 0.5 and fv.Unit or car.CFrame.LookVector
+    mp.AssemblyLinearVelocity = Vector3.new(
+        dir.X * instantForce, mp.AssemblyLinearVelocity.Y, dir.Z * instantForce)
+end
+
+local InstantBoostBtn = BoostBox:AddButton({
+    Text    = "Instant Boost",
+    Tooltip = "Instantly boosts the car in its current direction",
+    Func    = doInstantBoost,
+})
+
+local function doInstantBoostCam()
+    local car = getMyDrivenCar(); if not car then return end
+    local mp  = getMainPart(car); if not mp then return end
+    local cd  = workspace.CurrentCamera.CFrame.LookVector
+    mp.AssemblyLinearVelocity = Vector3.new(
+        cd.X * instantForce, cd.Y * instantForce, cd.Z * instantForce)
+end
+
+local InstantBoostCamBtn = BoostBox:AddButton({
+    Text    = "Instant Boost (Cam)",
+    Tooltip = "Instantly boosts the car toward the camera direction",
+    Func    = doInstantBoostCam,
+})
+
+local function doZeroVel()
+    local car = getMyDrivenCar(); if not car then return end
+    local mp  = getMainPart(car); if not mp then return end
+    mp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+    mp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+end
+
+local ZeroVelBtn = BoostBox:AddButton({
+    Text    = "Zero Velocity",
+    Tooltip = "Stops the car completely",
+    Func    = doZeroVel,
+})
+
+BoostBox:AddSlider("InstantForceSlider", {
+    Text     = "Instant / Cam Force",
+    Default  = 200,
+    Min      = 0,
+    Max      = 750,
+    Rounding = 0,
+    Suffix   = "N",
+    Callback = function(v) instantForce = v end,
+})
+
+local FloatToggle = MovementBox:AddToggle("FloatToggle", {
+    Text     = "Float (Lock Y)",
+    Default  = false,
+    Tooltip  = "Locks the car at its current height",
+    Callback = function(v)
+        floatEnabled = v
+        if not floatEnabled then
+            floatY = nil
+            local car = getMyDrivenCar()
+            if car then
+                local bv = car:FindFirstChild("BodyVelocity")
+                if bv then bv.MaxForce = Vector3.new(bv.MaxForce.X, 0, bv.MaxForce.Z) end
+            end
+        end
+    end,
+})
+FloatToggle:AddKeyPicker("FloatKeybind", { Text = "Float", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+MovementBox:AddDivider()
+
+local GravityToggle = MovementBox:AddToggle("GravityToggle", {
+    Text     = "Low Gravity",
+    Default  = false,
+    Tooltip  = "Reduces workspace gravity",
+    Callback = function(v)
+        gravityEnabled = v
+        if not gravityEnabled then game.Workspace.Gravity = 196.2 end
+    end,
+})
+GravityToggle:AddKeyPicker("GravityKeybind", { Text = "Low Gravity", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+MovementBox:AddSlider("GravityStrengthSlider", {
+    Text     = "Gravity Strength",
+    Default  = 50,
+    Min      = -500,
+    Max      = 196,
+    Rounding = 0,
+    Suffix   = "N",
+    Callback = function(v)
+        gravityStrength = v
+        if gravityEnabled then game.Workspace.Gravity = gravityStrength end
+    end,
+})
+
+MovementBox:AddDivider()
+
+local NoFlipToggle = MovementBox:AddToggle("NoFlipToggle", {
+    Text     = "No Flip",
+    Default  = false,
+    Tooltip  = "Prevents the car from rotating on X/Z axes",
+    Callback = function(v) noFlipEnabled = v end,
+})
+NoFlipToggle:AddKeyPicker("NoFlipKeybind", { Text = "No Flip", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+MovementBox:AddDivider()
+
+local SpeedLimitToggle = MovementBox:AddToggle("SpeedLimitToggle", {
+    Text     = "Speed Limiter",
+    Default  = false,
+    Tooltip  = "Caps the car's horizontal velocity at the set value",
+    Callback = function(v) speedLimitEnabled = v end,
+})
+SpeedLimitToggle:AddKeyPicker("SpeedLimitKeybind", { Text = "Speed Limit", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+MovementBox:AddSlider("SpeedLimitSlider", {
+    Text     = "Speed Limit",
+    Default  = 200,
+    Min      = 10,
+    Max      = 1000,
+    Rounding = 0,
+    Suffix   = "studs/s",
+    Callback = function(v) speedLimitValue = v end,
+})
+
+MovementBox:AddDivider()
+
+MovementBox:AddButton({
+    Text    = "Flip Car",
+    Tooltip = "Flips the car upright",
+    Func    = function()
+        local car = getMyDrivenCar(); if not car then return end
+        local cf  = car.CFrame
+        local _, yAngle, _ = cf:ToEulerAnglesYXZ()
+        car.CFrame = CFrame.new(cf.Position.X, cf.Position.Y, cf.Position.Z)
+                   * CFrame.Angles(0, yAngle, math.pi)
+    end,
+})
+
+local BounceToggle = FunBox:AddToggle("BounceToggle", {
+    Text     = "Bounce",
+    Default  = false,
+    Tooltip  = "Periodically launches the car upward",
+    Callback = function(v)
+        bounceEnabled = v
+        if bounceEnabled then startBounceLoop() end
+    end,
+})
+BounceToggle:AddKeyPicker("BounceKeybind", { Text = "Bounce", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+FunBox:AddSlider("BounceForceSlider", {
+    Text     = "Bounce Force",
+    Default  = 50,
+    Min      = 0,
+    Max      = 200,
+    Rounding = 0,
+    Suffix   = "N",
+    Callback = function(v) bounceForce = v end,
+})
+
+FunBox:AddDivider()
+
+local SpinToggle = FunBox:AddToggle("SpinToggle", {
+    Text     = "Spin",
+    Default  = false,
+    Tooltip  = "Spins the car on its Y axis",
+    Callback = function(v)
+        spinEnabled = v
+        if not spinEnabled then
+            local car = getMyDrivenCar()
+            if car then
+                local bav = car:FindFirstChild("BodyAngularVelocity")
+                if bav then
+                    bav.AngularVelocity = Vector3.new(0, 0, 0)
+                    bav.MaxTorque       = Vector3.new(0, 0, 0)
+                end
+            end
+        end
+    end,
+})
+SpinToggle:AddKeyPicker("SpinKeybind", { Text = "Spin", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+FunBox:AddSlider("SpinSpeedSlider", {
+    Text     = "Spin Speed",
+    Default  = 50,
+    Min      = 0,
+    Max      = 200,
+    Rounding = 0,
+    Suffix   = "rpm",
+    Callback = function(v) spinSpeed = v end,
+})
+
+FunBox:AddDivider()
+
+local FreezeToggle = FunBox:AddToggle("FreezeToggle", {
+    Text     = "Freeze Car",
+    Default  = false,
+    Tooltip  = "Locks the car completely in place",
+    Callback = function(v)
+        freezeEnabled = v
+        if freezeEnabled then
+            local car = getMyDrivenCar()
+            if car then frozenCFrame = car.CFrame end
+        else
+            frozenCFrame = nil
+        end
+    end,
+})
+FreezeToggle:AddKeyPicker("FreezeKeybind", { Text = "Freeze", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+local carList = getCarList()
+selectedCarName = carList[1]
+
+TeleportCarDropdown = TeleportBox:AddDropdown("TeleportCarDropdown", {
+    Values   = carList,
+    Default  = 1,
+    Text     = "Select Car",
+    Callback = function(v) selectedCarName = v end,
+})
+
+TeleportBox:AddButton({
+    Text = "Teleport",
+    Func = function()
+        if not selectedCarName or selectedCarName == "No cars" then return end
+        local car = nil
+        for _, v in ipairs(vehiclesFolder:GetChildren()) do
+            if v.Name == selectedCarName then car = v; break end
+        end
+        if not car then return end
+        local pos = car:IsA("BasePart") and car.Position or nil
+        if not pos then
+            for _, p in ipairs(car:GetDescendants()) do
+                if p:IsA("BasePart") then pos = p.Position; break end
+            end
+        end
+        if not pos then return end
+        local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.CFrame = CFrame.new(pos.X, pos.Y + 5, pos.Z) end
+    end,
+})
+
+end
+
+local bhopConn = nil
+local bhopVelocity         = Vector3.zero
+local bhopMoveF, bhopMoveR = 0, 0
+local bhopJumpHeld         = false
+local bhopChar, bhopHum, bhopRoot
+local storedAnimateScript  = nil
+
+local function bhopFlat(v) return Vector3.new(v.X, 0, v.Z) end
+
+local function srcAccelerate(vel, wishDir, wishSpeed, accel, dt)
+    local addSpeed = wishSpeed - vel:Dot(wishDir)
+    if addSpeed <= 0 then return vel end
+    local accelSpeed = math.min(accel * wishSpeed * dt, addSpeed)
+    return vel + wishDir * accelSpeed
+end
+
+local function srcFriction(vel, dt)
+    local speed = bhopFlat(vel).Magnitude
+    if speed < 0.1 then return Vector3.new(0, vel.Y, 0) end
+    local drop  = math.max(speed, bhopGroundSpeed) * bhopFriction * dt
+    local scale = math.max(speed - drop, 0) / speed
+    return Vector3.new(vel.X * scale, vel.Y, vel.Z * scale)
+end
+
+local function nukeAnims(char)
+    if not bhopDisableAnims then return end
+    local anim = char:FindFirstChild("Animate")
+    if anim then
+        storedAnimateScript = anim:Clone()
+        anim:Destroy()
+    end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        for _, t in hum:GetPlayingAnimationTracks() do t:Stop(0) end
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if animator then animator:Destroy() end
+    end
+end
+
+local function restoreAnims(char)
+    if not char then return end
+    if storedAnimateScript then
+        local existing = char:FindFirstChild("Animate")
+        if existing then existing:Destroy() end
+        local clone = storedAnimateScript:Clone()
+        clone.Parent = char
+        storedAnimateScript = nil
+    end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and not hum:FindFirstChildOfClass("Animator") then
+        Instance.new("Animator").Parent = hum
+    end
+end
+
+local function bhopGetWishDir()
+    if bhopMoveF == 0 and bhopMoveR == 0 then return Vector3.zero end
+    local cf  = workspace.CurrentCamera.CFrame
+    local dir = bhopFlat(cf.LookVector).Unit * bhopMoveF
+              + bhopFlat(cf.RightVector).Unit * bhopMoveR
+    return dir.Magnitude > 0 and dir.Unit or Vector3.zero
+end
+
+local bhopRayParams = RaycastParams.new()
+bhopRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function bhopGrounded()
+    if not bhopRoot or not bhopChar then return false end
+    bhopRayParams.FilterDescendantsInstances = {bhopChar}
+    return workspace:Raycast(bhopRoot.Position, Vector3.new(0, -3.5, 0), bhopRayParams) ~= nil
+end
+
+local function bhopSetup(char)
+    bhopChar      = char
+    bhopHum       = char:WaitForChild("Humanoid")
+    bhopRoot      = char:WaitForChild("HumanoidRootPart")
+    bhopVelocity  = Vector3.zero
+    bhopMoveF, bhopMoveR = 0, 0
+    bhopJumpHeld  = false
+
+    task.wait()
+    if not playerBhopEnabled then return end
+
+    workspace.Gravity = 196.2
+
+    localPlayer.CameraMode = bhopFirstPerson
+        and Enum.CameraMode.LockFirstPerson
+        or  Enum.CameraMode.Classic
+
+    bhopHum.WalkSpeed  = 0
+    bhopHum.JumpPower  = 0
+    bhopHum.JumpHeight = 0
+    bhopHum.AutoRotate = false
+    bhopHum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+    nukeAnims(char)
+
+    bhopHum.StateChanged:Connect(function()
+        if not playerBhopEnabled then return end
+        bhopHum.WalkSpeed  = 0
+        bhopHum.JumpPower  = 0
+        bhopHum.JumpHeight = 0
+        bhopHum.AutoRotate = false
+        bhopHum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+    end)
+
+    if bhopConn then bhopConn:Disconnect() end
+    bhopConn = RunService.RenderStepped:Connect(function(dt)
+        if not playerBhopEnabled then return end
+        if not bhopRoot or not bhopHum or bhopHum.Health <= 0 then return end
+
+        bhopHum.WalkSpeed  = 0
+        bhopHum.JumpPower  = 0
+        bhopHum.JumpHeight = 0
+        bhopHum.AutoRotate = false
+
+        local grounded = bhopGrounded()
+        bhopVelocity = Vector3.new(
+            bhopVelocity.X,
+            bhopRoot.AssemblyLinearVelocity.Y,
+            bhopVelocity.Z
+        )
+
+        local shouldJump = bhopJumpHeld or autoBhopEnabled
+        if grounded and shouldJump then
+            bhopVelocity = Vector3.new(bhopVelocity.X, bhopJumpPower, bhopVelocity.Z)
+            grounded = false
+        end
+
+        local wishDir = bhopGetWishDir()
+
+        if grounded then
+            bhopVelocity = srcFriction(bhopVelocity, dt)
+            if wishDir.Magnitude > 0 then
+                bhopVelocity = srcAccelerate(bhopVelocity, wishDir,
+                    bhopGroundSpeed, bhopGroundAccel, dt)
+            end
+        elseif wishDir.Magnitude > 0 then
+            bhopVelocity = srcAccelerate(bhopVelocity, wishDir,
+                bhopAirSpeed, bhopAirAccel, dt)
+        end
+
+        local fv = bhopFlat(bhopVelocity)
+        if fv.Magnitude > bhopMaxSpeed then
+            fv = fv.Unit * bhopMaxSpeed
+            bhopVelocity = Vector3.new(fv.X, bhopVelocity.Y, fv.Z)
+        end
+
+        bhopRoot.AssemblyLinearVelocity = bhopVelocity
+
+        local look = bhopFlat(workspace.CurrentCamera.CFrame.LookVector)
+        if look.Magnitude > 0.01 then
+            bhopRoot.CFrame = CFrame.new(bhopRoot.Position, bhopRoot.Position + look)
+        end
+    end)
+end
+
+local function bhopDisable()
+    playerBhopEnabled = false
+    if bhopConn then bhopConn:Disconnect(); bhopConn = nil end
+    if bhopHum then
+        bhopHum.WalkSpeed  = 16
+        bhopHum.JumpPower  = 50
+        bhopHum.JumpHeight = 7.2
+        bhopHum.AutoRotate = true
+        bhopHum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+    end
+    restoreAnims(bhopChar)
+    localPlayer.CameraMode = Enum.CameraMode.Classic
+    bhopMoveF, bhopMoveR   = 0, 0
+    bhopJumpHeld           = false
+    bhopVelocity           = Vector3.zero
+end
+
+UIS.InputBegan:Connect(function(inp, gp)
+    local kc = inp.KeyCode
+    if kc == Enum.KeyCode.Space then bhopJumpHeld = true; return end
+    if gp or not playerBhopEnabled then return end
+    if     kc == Enum.KeyCode.W then bhopMoveF =  1
+    elseif kc == Enum.KeyCode.S then bhopMoveF = -1
+    elseif kc == Enum.KeyCode.A then bhopMoveR = -1
+    elseif kc == Enum.KeyCode.D then bhopMoveR =  1 end
+end)
+
+UIS.InputEnded:Connect(function(inp)
+    local kc = inp.KeyCode
+    if kc == Enum.KeyCode.Space                     then bhopJumpHeld = false
+    elseif kc == Enum.KeyCode.W and bhopMoveF ==  1 then bhopMoveF = 0
+    elseif kc == Enum.KeyCode.S and bhopMoveF == -1 then bhopMoveF = 0
+    elseif kc == Enum.KeyCode.A and bhopMoveR == -1 then bhopMoveR = 0
+    elseif kc == Enum.KeyCode.D and bhopMoveR ==  1 then bhopMoveR = 0 end
+end)
+
+localPlayer.CharacterAdded:Connect(function(char)
+    if playerBhopEnabled then bhopSetup(char) end
+end)
+
+local PlayerBhopToggle = PlayerBox:AddToggle("PlayerBhopToggle", {
+    Text     = "Bhop",
+    Default  = false,
+    Tooltip  = "Source Engine bhop — WASD to move, Space to hop, air strafe with A/D",
+    Callback = function(v)
+        playerBhopEnabled = v
+        if playerBhopEnabled then
+            local char = localPlayer.Character
+            if char then bhopSetup(char) end
+        else
+            bhopDisable()
+        end
+    end,
+})
+PlayerBhopToggle:AddKeyPicker("BhopKeybind", { Text = "Bhop", Default = "None", Mode = "Toggle", SyncToggleState = true })
+
+PlayerBox:AddToggle("AutoBhopToggle", {
+    Text     = "Auto Bhop",
+    Default  = false,
+    Tooltip  = "Automatically jumps every time you land — no timing needed",
+    Callback = function(v) autoBhopEnabled = v end,
+})
+
+PlayerBox:AddToggle("BhopFirstPerson", {
+    Text     = "First Person Lock",
+    Default  = true,
+    Tooltip  = "Lock camera to first person while bhop is active",
+    Callback = function(v)
+        bhopFirstPerson = v
+        if not playerBhopEnabled then return end
+        localPlayer.CameraMode = bhopFirstPerson
+            and Enum.CameraMode.LockFirstPerson
+            or  Enum.CameraMode.Classic
+    end,
+})
+
+PlayerBox:AddToggle("BhopDisableAnims", {
+    Text     = "Disable Animations",
+    Default  = true,
+    Tooltip  = "Remove walk/run animations for cleaner movement",
+    Callback = function(v)
+        bhopDisableAnims = v
+        if not playerBhopEnabled then return end
+        if bhopDisableAnims then nukeAnims(bhopChar) else restoreAnims(bhopChar) end
+    end,
+})
+
+PlayerBox:AddSlider("BhopGroundSpeed", { Text = "Ground Max Speed",    Default = 50,    Min = 10,  Max = 200,   Rounding = 0, Suffix = "studs/s", Callback = function(v) bhopGroundSpeed = v end })
+PlayerBox:AddSlider("BhopAirSpeed",    { Text = "Air Max Speed",       Default = 5,     Min = 1,   Max = 50,    Rounding = 0, Suffix = "studs/s", Callback = function(v) bhopAirSpeed    = v end })
+PlayerBox:AddSlider("BhopGroundAccel", { Text = "Ground Acceleration", Default = 50,    Min = 1,   Max = 200,   Rounding = 0, Suffix = "",        Callback = function(v) bhopGroundAccel = v end })
+PlayerBox:AddSlider("BhopAirAccel",    { Text = "Air Acceleration",    Default = 800,   Min = 10,  Max = 2000,  Rounding = 0, Suffix = "",        Callback = function(v) bhopAirAccel    = v end })
+PlayerBox:AddSlider("BhopFriction",    { Text = "Friction",            Default = 5,     Min = 0,   Max = 20,    Rounding = 1, Suffix = "",        Callback = function(v) bhopFriction    = v end })
+PlayerBox:AddSlider("BhopJumpPower",   { Text = "Jump Power",          Default = 50,    Min = 10,  Max = 150,   Rounding = 0, Suffix = "",        Callback = function(v) bhopJumpPower   = v end })
+PlayerBox:AddSlider("BhopMaxSpeed",    { Text = "Speed Cap",           Default = 10000, Min = 100, Max = 10000, Rounding = 0, Suffix = "studs/s", Callback = function(v) bhopMaxSpeed    = v end })
+
+local speedoEnabled = false
+local speedoLabel   = Drawing.new("Text")
+speedoLabel.Size    = 20
+speedoLabel.Font    = Drawing.Fonts.Monospace
+speedoLabel.Outline = true
+speedoLabel.Color   = Color3.new(1, 1, 1)
+speedoLabel.Visible = false
+speedoLabel.ZIndex  = 10
+speedoLabel.Center  = true
+
+local vp = workspace.CurrentCamera.ViewportSize
+speedoLabel.Position = Vector2.new(vp.X / 2, vp.Y - 175)
+
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    local v = workspace.CurrentCamera.ViewportSize
+    speedoLabel.Position = Vector2.new(v.X / 2, v.Y - 60)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        if not speedoEnabled then speedoLabel.Visible = false; continue end
+        local speed = 0
+        if carSupported then
+            local car = getMyDrivenCar()
+            if car then
+                local mp = getMainPart(car)
+                if mp then
+                    local v = mp.AssemblyLinearVelocity
+                    speed = math.sqrt(v.X*v.X + v.Z*v.Z + v.Y*v.Y)
+                end
+            end
+        end
+        if speed == 0 then
+            local char = localPlayer.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local v = hrp.AssemblyLinearVelocity
+                speed = math.sqrt(v.X*v.X + v.Z*v.Z + v.Y*v.Y)
+            end
+        end
+        speedoLabel.Text    = string.format("%.0f studs/s", speed)
+        speedoLabel.Visible = true
+    end
+end)
+
+PlayerBox:AddDivider()
+PlayerBox:AddToggle("SpeedometerToggle", {
+    Text     = "Speedometer",
+    Default  = false,
+    Tooltip  = "Shows current horizontal speed at the bottom of the screen",
+    Callback = function(v)
+        speedoEnabled = v
+        if not speedoEnabled then speedoLabel.Visible = false end
+    end,
+})
+
+
+if carSupported then
+
+task.spawn(function()
+    local lastList = {}
+    while true do
+        task.wait(1)
+        local newList = getCarList()
+        local changed = #newList ~= #lastList
+        if not changed then
+            for i, v in ipairs(newList) do
+                if lastList[i] ~= v then changed = true; break end
+            end
+        end
+        if changed then
+            lastList = newList
+            selectedCarName = newList[1]
+            if TeleportCarDropdown then
+                pcall(function()
+                    TeleportCarDropdown:SetValues(newList)
+                    TeleportCarDropdown:SetValue(newList[1])
+                end)
+            end
+        end
+    end
+end)
+
+game.Workspace:GetPropertyChangedSignal("Gravity"):Connect(function()
+    if gravityEnabled then game.Workspace.Gravity = gravityStrength end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if gravityEnabled then game.Workspace.Gravity = gravityStrength end
+
+    local car = getMyDrivenCar()
+
+    if noFlipEnabled then
+        wasNoFlip = true
+        if car then
+            local bav = car:FindFirstChild("BodyAngularVelocity")
+            if bav then
+                bav.MaxTorque       = Vector3.new(1e9, 0, 1e9)
+                bav.AngularVelocity = Vector3.new(0, bav.AngularVelocity.Y, 0)
+            end
+        end
+    elseif wasNoFlip then
+        wasNoFlip = false
+        if car then
+            local bav = car:FindFirstChild("BodyAngularVelocity")
+            if bav then bav.MaxTorque = Vector3.new(0, bav.MaxTorque.Y, 0) end
+        end
+    end
+
+    if spinEnabled then
+        wasSpin = true
+        if car then
+            local bav = car:FindFirstChild("BodyAngularVelocity")
+            if bav then
+                bav.MaxTorque       = Vector3.new(bav.MaxTorque.X, 1e9, bav.MaxTorque.Z)
+                bav.AngularVelocity = Vector3.new(0, spinSpeed, 0)
+            end
+        end
+    elseif wasSpin then
+        wasSpin = false
+        if car then
+            local bav = car:FindFirstChild("BodyAngularVelocity")
+            if bav then
+                bav.MaxTorque       = Vector3.new(bav.MaxTorque.X, 0, bav.MaxTorque.Z)
+                bav.AngularVelocity = Vector3.new(0, 0, 0)
+            end
+        end
+    end
+
+    if freezeEnabled and car then
+        if not frozenCFrame then frozenCFrame = car.CFrame end
+        local mp = getMainPart(car)
+        if mp then
+            mp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            mp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+        car.CFrame = frozenCFrame
+    end
+
+    if speedLimitEnabled and car then
+        local mp = getMainPart(car)
+        if mp then
+            local vel = mp.AssemblyLinearVelocity
+            local hv  = Vector3.new(vel.X, 0, vel.Z)
+            if hv.Magnitude > speedLimitValue then
+                local clamped = hv.Unit * speedLimitValue
+                mp.AssemblyLinearVelocity = Vector3.new(clamped.X, vel.Y, clamped.Z)
+            end
+        end
+    end
+
+    if not floatEnabled or not car then return end
+    if not floatY then floatY = car.Position.Y end
+    local bv = car:FindFirstChild("BodyVelocity")
+    if bv then
+        bv.MaxForce = Vector3.new(bv.MaxForce.X, 1e9, bv.MaxForce.Z)
+        bv.Velocity = Vector3.new(bv.Velocity.X, 0, bv.Velocity.Z)
+    end
+    local cf = car.CFrame
+    car.CFrame = CFrame.new(cf.Position.X, floatY, cf.Position.Z) * (cf - cf.Position)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(boostInterval)
+        if not boostEnabled then continue end
+        local drivenCar = getMyDrivenCar()
+        if drivenCar ~= boostedCar then
+            cleanup()
+            if drivenCar then setupBoost(drivenCar) end
+        end
+        if boostedCar and currentVectorForce then
+            local mp = getMainPart(boostedCar)
+            if mp then
+                local vel = mp.AssemblyLinearVelocity
+                local fv  = Vector3.new(vel.X, 0, vel.Z)
+                currentVectorForce.Force = fv.Magnitude > 0.5
+                    and fv.Unit * mp.AssemblyMass * boostForce
+                    or  Vector3.new(0, 0, 0)
+            end
+        end
+    end
+end)
+
+end

@@ -1,0 +1,472 @@
+local Players     = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local autoFarmNearest = false
+local skipBoss        = false
+local onlyBoss        = false
+local orbitDistance   = 5
+local orbitAngle      = 0
+local orbitSpeed      = 0.05
+local verticalDist    = 10
+local farmMethod      = "Above"
+local freezePos       = false
+local frozenPosition  = nil
+local farmConfig      = false
+
+-- ─── Farm Config Waypoints ────────────────────────────────────
+local WP = {
+    farmSpot     = Vector3.new(-3055.15, 8.28,  -649.51),
+    jojosWP      = Vector3.new(-2701.50, 11.57, -657.44),
+    punchWP      = Vector3.new(-1651.86, 4.87,  1531.13),
+    starterWP    = Vector3.new(-567.93,  -3.11, -354.35),
+}
+local BANDIT_NAMES = {
+    "StrongBandit1","StrongBandit2","StrongBandit3","StrongBandit4","StrongBandit5"
+}
+local BOSS_NAME    = "CosmicBeingBoss_Normal"
+local TWEEN_SPEED  = 115
+
+-- ─── Load library ────────────────────────────────────────────
+local Library
+do
+    local ok, err = pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/myth4c/Scripts/refs/heads/main/wabisabi%20lib"))()
+        Library = WabiSabiUILibrary
+    end)
+    if not ok or not Library then
+        warn("Failed to load WabiSabi UI: " .. tostring(err))
+        return
+    end
+end
+
+-- ─── Window ───────────────────────────────────────────────────
+local Window = Library:CreateWindow({
+    Title   = "redacted's | sailor piece",
+    Columns = 1,
+    Divider = true,
+    ConfigFile = "autofarm_npcs.json",
+    BuiltInIndicatorToggle = false,
+    Width   = 300,
+    Theme   = { Colors = { Accent = Color3.fromRGB(0,170,80) } }
+})
+
+task.spawn(function()
+    task.wait(0.2)
+    pcall(function()
+        Window.Indicator:SetVisible(false)
+        Window.Config.IndicatorEnabled = false
+    end)
+end)
+
+Window:AddSection("Farming", { Column = 1 })
+
+Window:AddToggle("auto_farm_nearest", {
+    Text        = "Auto Farm Nearest",
+    Description = "Farms the nearest NPC in game.Workspace.NPCs",
+    Default     = false,
+    Keybind     = true,
+    Column      = 1,
+    Callback    = function(v)
+        autoFarmNearest = v
+        notify(v and "Auto Farm Nearest ON!" or "Auto Farm Nearest OFF!", "Auto Farm", 2)
+    end
+})
+
+Window:AddToggle("skip_boss", {
+    Text        = "Skip Bosses",
+    Description = "Ignores any NPC with 'Boss' in its name",
+    Default     = false,
+    Keybind     = true,
+    Column      = 1,
+    Callback    = function(v)
+        skipBoss = v
+        if v then onlyBoss = false end
+        notify(v and "Skip Bosses ON!" or "Skip Bosses OFF!", "Auto Farm", 2)
+    end
+})
+
+Window:AddToggle("only_boss", {
+    Text        = "Only Bosses",
+    Description = "Only farms NPCs with 'Boss' in their name",
+    Default     = false,
+    Keybind     = true,
+    Column      = 1,
+    Callback    = function(v)
+        onlyBoss = v
+        if v then skipBoss = false end
+        notify(v and "Only Bosses ON!" or "Only Bosses OFF!", "Auto Farm", 2)
+    end
+})
+
+Window:AddDropdown("farm_method", {
+    Text        = "Farm Method",
+    Description = "Orbit: circles the NPC | Above: hovers above | Under: sits below",
+    Options     = { "Orbit", "Above", "Under" },
+    Default     = "Above",
+    Column      = 1,
+    Callback    = function(v) farmMethod = v end
+})
+
+Window:AddSlider("orbit_distance", {
+    Text        = "Orbit Distance",
+    Description = "How far to orbit around the NPC (Orbit only)",
+    Min         = 1,
+    Max         = 50,
+    Default     = 5,
+    Rounding    = 0,
+    Column      = 1,
+    Callback    = function(v) orbitDistance = v end
+})
+
+Window:AddSlider("orbit_speed", {
+    Text        = "Orbit Speed",
+    Description = "How fast to orbit around the NPC (Orbit only)",
+    Min         = 1,
+    Max         = 30,
+    Default     = 5,
+    Rounding    = 0,
+    Column      = 1,
+    Callback    = function(v) orbitSpeed = v / 100 end
+})
+
+Window:AddSlider("vertical_dist", {
+    Text        = "Vertical Distance",
+    Description = "How far above or below the NPC (Above / Under)",
+    Min         = 1,
+    Max         = 100,
+    Default     = 10,
+    Rounding    = 0,
+    Column      = 1,
+    Callback    = function(v) verticalDist = v end
+})
+
+Window:AddToggle("freeze_pos", {
+    Text        = "Freeze Position",
+    Description = "Locks your character in place",
+    Default     = false,
+    Keybind     = true,
+    Column      = 1,
+    Callback    = function(v)
+        freezePos = v
+        if v then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then frozenPosition = hrp.Position end
+        else
+            frozenPosition = nil
+        end
+        notify(v and "Freeze Position ON!" or "Freeze Position OFF!", "Auto Farm", 2)
+    end
+})
+
+Window:AddToggle("farm_config", {
+    Text        = "farm for smth",
+    Description = "Farms Jojos bandits, checks for boss every 15min, kills boss when found",
+    Default     = false,
+    Keybind     = true,
+    Column      = 1,
+    Callback    = function(v)
+        farmConfig = v
+        notify(v and "Farm Config ON!" or "Farm Config OFF!", "Auto Farm", 2)
+    end
+})
+
+-- ─── Helpers ─────────────────────────────────────────────────
+local function getRootPart(model)
+    return model:FindFirstChild("HumanoidRootPart")
+        or model:FindFirstChild("Torso")
+        or model:FindFirstChildOfClass("BasePart")
+end
+
+local function isAlive(model)
+    if not model or not model.Parent then return false end
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return true
+end
+
+local function getTargetPos(tr)
+    if farmMethod == "Orbit" then
+        orbitAngle = orbitAngle + orbitSpeed
+        local ox = math.cos(orbitAngle) * orbitDistance
+        local oz = math.sin(orbitAngle) * orbitDistance
+        return Vector3.new(tr.Position.X + ox, tr.Position.Y, tr.Position.Z + oz)
+    elseif farmMethod == "Above" then
+        return Vector3.new(tr.Position.X, tr.Position.Y + verticalDist, tr.Position.Z)
+    elseif farmMethod == "Under" then
+        return Vector3.new(tr.Position.X, tr.Position.Y - verticalDist, tr.Position.Z)
+    end
+end
+
+local function farmAttack(hrp, checkFn)
+    local folder = game.Workspace:FindFirstChild("NPCs")
+    if not folder then return end
+
+    local nearest, bestDist = nil, math.huge
+    for _, model in pairs(folder:GetChildren()) do
+        if model:IsA("Model") and isAlive(model) and model.Name ~= "TrainingDummy" then
+            if skipBoss and string.find(model.Name, "Boss") then continue end
+            if onlyBoss and not string.find(model.Name, "Boss") then continue end
+            local root = getRootPart(model)
+            if root then
+                local dx = root.Position.X - hrp.Position.X
+                local dy = root.Position.Y - hrp.Position.Y
+                local dz = root.Position.Z - hrp.Position.Z
+                local d  = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if d < bestDist and d <= 500 then
+                    bestDist = d; nearest = model
+                end
+            end
+        end
+    end
+    if not nearest then return end
+
+    task.spawn(function()
+        while checkFn() and isAlive(nearest) do
+            for _, part in pairs(nearest:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = false end
+            end
+            task.wait()
+        end
+    end)
+
+    local lastClick = 0
+    while checkFn() and isAlive(nearest) do
+        local tr = getRootPart(nearest)
+        if tr then
+            local targetPos = getTargetPos(tr)
+            hrp.Position = targetPos
+            hrp.Velocity = Vector3.new(0, 0, 0)
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            hrp.CFrame = CFrame.lookAt(targetPos, tr.Position)
+        end
+        local now = os.clock()
+        if now - lastClick >= 0.06 then mouse1click(); lastClick = now end
+        task.wait()
+    end
+end
+
+-- ─── Farm Loop ───────────────────────────────────────────────
+task.spawn(function()
+    while true do
+        if autoFarmNearest then
+            local char = LocalPlayer.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                farmAttack(hrp, function() return autoFarmNearest end)
+            end
+            task.wait(0.1)
+        else
+            task.wait(0.1)
+        end
+    end
+end)
+
+-- ─── Freeze Position Loop ────────────────────────────────────
+task.spawn(function()
+    while true do
+        task.wait()
+        if freezePos and frozenPosition then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.Position = frozenPosition
+                hrp.Velocity = Vector3.new(0, 0, 0)
+                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end
+        end
+    end
+end)
+
+-- ─── Farm Config Helpers ──────────────────────────────────────
+local function cfgGetHRP()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function cfgTweenTo(targetPos)
+    local hrp = cfgGetHRP()
+    if not hrp then return end
+    local startPos = hrp.Position
+    local dx = targetPos.X - startPos.X
+    local dy = targetPos.Y - startPos.Y
+    local dz = targetPos.Z - startPos.Z
+    local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+    if dist < 0.5 then return end
+    local duration = dist / TWEEN_SPEED
+    local t0 = os.clock()
+    while true do
+        if not farmConfig then return end
+        local hrp2 = cfgGetHRP()
+        if not hrp2 then return end
+        local alpha = math.min((os.clock() - t0) / duration, 1)
+        hrp2.Position = Vector3.new(
+            startPos.X + dx * alpha,
+            startPos.Y + dy * alpha,
+            startPos.Z + dz * alpha
+        )
+        hrp2.Velocity = Vector3.new(0, 0, 0)
+        hrp2.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        if alpha >= 1 then break end
+        task.wait()
+    end
+end
+
+local function cfgGetClosestPortal()
+    local hrp = cfgGetHRP()
+    if not hrp then return nil end
+    local best, bestDist = nil, math.huge
+    for _, obj in pairs(game.Workspace:GetDescendants()) do
+        if string.find(obj.Name:lower(), "portal") and obj:IsA("BasePart") then
+            local dx = obj.Position.X - hrp.Position.X
+            local dy = obj.Position.Y - hrp.Position.Y
+            local dz = obj.Position.Z - hrp.Position.Z
+            local d = math.sqrt(dx*dx + dy*dy + dz*dz)
+            if d < bestDist then bestDist = d; best = obj end
+        end
+    end
+    return best
+end
+
+local function cfgTweenToPortal()
+    local portal = cfgGetClosestPortal()
+    if portal then
+        cfgTweenTo(portal.Position)
+        task.wait(1)
+    end
+end
+
+local function cfgGetBoss()
+    local folder = game.Workspace:FindFirstChild("NPCs")
+    if not folder then return nil end
+    return folder:FindFirstChild(BOSS_NAME)
+end
+
+local function cfgIsAlive(model)
+    if not model or not model.Parent then return false end
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    return hum and hum.Health > 0
+end
+
+local function cfgKillBoss()
+    local boss = cfgGetBoss()
+    if not boss then return end
+    local bossRoot = boss:FindFirstChild("HumanoidRootPart") or boss:FindFirstChildOfClass("BasePart")
+    if not bossRoot then return end
+    notify("Boss found! Killing " .. BOSS_NAME, "Farm Config", 3)
+    -- tween to portal first
+    cfgTweenToPortal()
+    -- tween to boss
+    local lastClick = 0
+    while farmConfig and cfgIsAlive(boss) do
+        local hrp = cfgGetHRP()
+        if not hrp then break end
+        bossRoot = boss:FindFirstChild("HumanoidRootPart") or boss:FindFirstChildOfClass("BasePart")
+        if not bossRoot then break end
+        -- disable boss collision
+        for _, part in pairs(boss:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+        hrp.Position = Vector3.new(bossRoot.Position.X, bossRoot.Position.Y + 10, bossRoot.Position.Z)
+        hrp.Velocity = Vector3.new(0, 0, 0)
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        local now = os.clock()
+        if now - lastClick >= 0.06 then mouse1click(); lastClick = now end
+        task.wait()
+    end
+    notify("Boss killed! Returning to farm spot", "Farm Config", 3)
+    -- go back: portal -> jojos -> farm spot
+    cfgTweenToPortal()
+    cfgTweenTo(WP.jojosWP)
+    cfgTweenTo(WP.farmSpot)
+end
+
+local function cfgKillBandits()
+    local folder = game.Workspace:FindFirstChild("NPCs")
+    if not folder then return end
+    local hrp = cfgGetHRP()
+    if not hrp then return end
+    -- find alive bandit
+    for _, name in pairs(BANDIT_NAMES) do
+        if not farmConfig then return end
+        local bandit = folder:FindFirstChild(name)
+        if bandit and cfgIsAlive(bandit) then
+            local bRoot = bandit:FindFirstChild("HumanoidRootPart") or bandit:FindFirstChildOfClass("BasePart")
+            if bRoot then
+                local lastClick = 0
+                while farmConfig and cfgIsAlive(bandit) do
+                    hrp = cfgGetHRP()
+                    if not hrp then break end
+                    bRoot = bandit:FindFirstChild("HumanoidRootPart") or bandit:FindFirstChildOfClass("BasePart")
+                    if not bRoot then break end
+                    for _, part in pairs(bandit:GetDescendants()) do
+                        if part:IsA("BasePart") then part.CanCollide = false end
+                    end
+                    hrp.Position = Vector3.new(bRoot.Position.X, bRoot.Position.Y + 5, bRoot.Position.Z)
+                    hrp.Velocity = Vector3.new(0, 0, 0)
+                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    local now = os.clock()
+                    if now - lastClick >= 0.06 then mouse1click(); lastClick = now end
+                    task.wait()
+                end
+            end
+        end
+    end
+end
+
+-- ─── Farm Config Loop ─────────────────────────────────────────
+task.spawn(function()
+    local lastBossCheck = os.clock()
+    while true do
+        task.wait()
+        if not farmConfig then continue end
+
+        local now = os.clock()
+
+        -- every 15 mins check punch island for boss
+        if now - lastBossCheck >= 900 then
+            lastBossCheck = now
+            notify("Checking Punch Island for boss...", "Farm Config", 2)
+            cfgTweenToPortal()
+            cfgTweenTo(WP.punchWP)
+            task.wait(2)
+            if cfgGetBoss() and cfgIsAlive(cfgGetBoss()) then
+                cfgKillBoss()
+            else
+                notify("No boss found, returning to farm", "Farm Config", 2)
+                cfgTweenToPortal()
+                cfgTweenTo(WP.jojosWP)
+                cfgTweenTo(WP.farmSpot)
+            end
+            continue
+        end
+
+        -- check if boss just spawned nearby
+        local boss = cfgGetBoss()
+        if boss and cfgIsAlive(boss) then
+            lastBossCheck = now -- reset timer after killing
+            cfgKillBoss()
+            continue
+        end
+
+        -- make sure we're near farm spot
+        local hrp = cfgGetHRP()
+        if hrp then
+            local dx = hrp.Position.X - WP.farmSpot.X
+            local dz = hrp.Position.Z - WP.farmSpot.Z
+            if math.sqrt(dx*dx + dz*dz) > 100 then
+                cfgTweenTo(WP.farmSpot)
+            end
+        end
+
+        -- farm bandits
+        cfgKillBandits()
+    end
+end)
+
+-- ─── Main loop ───────────────────────────────────────────────
+while true do
+    local ok, err = pcall(function() Window:Step() end)
+    if not ok then warn("Step error: " .. tostring(err)); task.wait(1) end
+    task.wait()
+end
