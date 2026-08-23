@@ -1983,14 +1983,21 @@ function Library:CreateWindow(opts)
     local w = setmetatable({}, Window)
     w.Style = deepCopy(DefaultStyle)
 
+    local requestedWidth = (type(opts.Width) == "number" and opts.Width > 0) and opts.Width or nil
+    local requestedHeight = (type(opts.Height) == "number" and opts.Height > 0) and opts.Height or nil
+    if typeof(opts.Size) == "Vector2" then
+        if opts.Size.X > 0 then requestedWidth = opts.Size.X end
+        if opts.Size.Y > 0 then requestedHeight = opts.Size.Y end
+    end
+
     w.Options = {
         Columns = (type(opts.Columns) == "number" and opts.Columns >= 1) and opts.Columns or 1,
         Divider = (opts.Columns == 2) and (opts.Divider ~= false) or false,
-        FixedHeight = (type(opts.Height) == "number" and opts.Height > 0) and opts.Height or nil
+        FixedHeight = requestedHeight
     }
 
     if type(opts.Title) == "string" then w.Style.Window.Title = opts.Title end
-    if type(opts.Width) == "number" then w.Style.Window.Size = Vector2.new(opts.Width, w.Style.Window.Size.Y) end
+    if requestedWidth then w.Style.Window.Size = Vector2.new(requestedWidth, w.Style.Window.Size.Y) end
     if w.Options.FixedHeight then
         w.Style.Window.Size = Vector2.new(w.Style.Window.Size.X, w.Options.FixedHeight)
     end
