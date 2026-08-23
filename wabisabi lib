@@ -1425,9 +1425,10 @@ function Window:_renderMainUI(statusData)
 
     if self:_hasTabs() then
         local tabCount = #self.Tabs
-        local tabX = pos.X + LAYOUT.PaddingX
-        local tabY = pos.Y + LAYOUT.TopDividerY + 2
-        local availableW = size.X - (LAYOUT.PaddingX * 2)
+        -- Full-width tab strip: tabs run edge-to-edge across the window.
+        local tabX = pos.X
+        local tabY = pos.Y + LAYOUT.TopDividerY + 1
+        local availableW = size.X
         local tabW = math.max(1, math.floor(availableW / tabCount))
 
         for index, tab in ipairs(self.Tabs) do
