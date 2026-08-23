@@ -1,0 +1,1388 @@
+-- UE / Linoria-style UI compatibility port for Matcha LuaVM
+-- Drawing-based: no Instance.new, ScreenGui, UDim2, Enum, RunService, or TweenService.
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    repeat
+        wait(0.1)
+        LocalPlayer = Players.LocalPlayer
+    until LocalPlayer
+end
+
+local Mouse = LocalPlayer:GetMouse()
+local Environment = (type(getgenv) == "function" and getgenv()) or _G
+
+local Toggles = Environment.Toggles or {}
+local Options = Environment.Options or {}
+Environment.Toggles = Toggles
+Environment.Options = Options
+
+local function clamp(value, minimum, maximum)
+    if value < minimum then return minimum end
+    if value > maximum then return maximum end
+    return value
+end
+
+local function round(value, places)
+    local power = 10 ^ (places or 0)
+    return math.floor(value * power + 0.5) / power
+end
+
+local function inside(point, rect)
+    return rect and point.X >= rect.x and point.X <= rect.x + rect.w
+        and point.Y >= rect.y and point.Y <= rect.y + rect.h
+end
+
+local function safeCallback(callback, ...)
+    if type(callback) ~= "function" then return end
+    local ok, err = pcall(callback, ...)
+    if not ok then warn("UE Matcha callback error: " .. tostring(err)) end
+end
+
+local function copyTable(source)
+    local output = {}
+    for key, value in pairs(source or {}) do output[key] = value end
+    return output
+end
+
+local function keyName(code)
+    if code == nil then return "None" end
+    if type(code) == "string" then return code end
+    if code == 0x01 then return "MB1" end
+    if code == 0x02 then return "MB2" end
+    if code >= 0x30 and code <= 0x39 then return string.char(code) end
+    if code >= 0x41 and code <= 0x5A then return string.char(code) end
+    if code >= 0x70 and code <= 0x7B then return "F" .. tostring(code - 0x6F) end
+    local names = {
+        [0x08] = "Backspace", [0x09] = "Tab", [0x0D] = "Enter",
+        [0x10] = "Shift", [0x11] = "Ctrl", [0x12] = "Alt",
+        [0x1B] = "Escape", [0x20] = "Space", [0x23] = "End",
+        [0x24] = "Home", [0x25] = "Left", [0x26] = "Up",
+        [0x27] = "Right", [0x28] = "Down", [0x2D] = "Insert",
+        [0x2E] = "Delete"
+    }
+    return names[code] or ("0x" .. string.format("%02X", code))
+end
+
+local function keyCode(value)
+    if type(value) == "number" then return value end
+    if type(value) ~= "string" then return nil end
+    local upper = string.upper(value)
+    if upper == "MB1" then return 0x01 end
+    if upper == "MB2" then return 0x02 end
+    if #upper == 1 then return string.byte(upper) end
+    local functionNumber = tonumber(string.match(upper, "^F(%d+)$"))
+    if functionNumber and functionNumber >= 1 and functionNumber <= 12 then
+        return 0x6F + functionNumber
+    end
+    local names = {
+        NONE = nil, BACKSPACE = 0x08, TAB = 0x09, ENTER = 0x0D,
+        SHIFT = 0x10, CTRL = 0x11, ALT = 0x12, ESCAPE = 0x1B,
+        SPACE = 0x20, END = 0x23, HOME = 0x24, LEFT = 0x25,
+        UP = 0x26, RIGHT = 0x27, DOWN = 0x28, INSERT = 0x2D,
+        DELETE = 0x2E
+    }
+    return names[upper]
+end
+
+local Library = {
+    FontColor = Color3.fromRGB(255, 255, 255),
+    MainColor = Color3.fromRGB(28, 28, 28),
+    BackgroundColor = Color3.fromRGB(20, 20, 20),
+    AccentColor = Color3.fromRGB(0, 85, 255),
+    OutlineColor = Color3.fromRGB(50, 50, 50),
+    RiskColor = Color3.fromRGB(255, 50, 50),
+    Black = Color3.new(0, 0, 0),
+    FontSize = 14,
+    Toggled = true,
+    ToggleKey = 0x23,
+    Windows = {},
+    KeyPickerList = {},
+    Signals = {},
+    UnloadCallbacks = {},
+    _drawings = {},
+    _unloaded = false,
+    NotifyConfig = { Alignment = "Left", BarSide = "Left", PositionX = 0, PositionY = 40 }
+}
+Library.Toggles = Toggles
+Library.Options = Options
+
+local function drawing(drawType, properties, owner)
+    local object = Drawing.new(drawType)
+    for key, value in pairs(properties or {}) do object[key] = value end
+    object.Visible = false
+    table.insert(Library._drawings, object)
+    if owner then table.insert(owner._drawings, object) end
+    return object
+end
+
+local function hideDeep(value)
+    if value == nil then return end
+    if type(value) == "table" then
+        for _, child in pairs(value) do hideDeep(child) end
+    else
+        pcall(function() value.Visible = false end)
+    end
+end
+
+local function removeDrawing(object)
+    if not object then return end
+    pcall(function() object:Remove() end)
+end
+
+function Library:SafeCallback(callback, ...)
+    safeCallback(callback, ...)
+end
+
+function Library:Notify(text, time)
+    notify(tostring(text or ""), "UE Matcha", time or 3)
+end
+
+function Library:SetFontSize(size)
+    if type(size) == "number" and size > 0 then self.FontSize = size end
+end
+
+function Library:GetDarkerColor(color)
+    return Color3.new(color.R * 0.75, color.G * 0.75, color.B * 0.75)
+end
+
+function Library:MapValue(value, minA, maxA, minB, maxB)
+    return (1 - ((value - minA) / (maxA - minA))) * minB + ((value - minA) / (maxA - minA)) * maxB
+end
+
+function Library:AttemptSave()
+    if self.SaveManager and type(self.SaveManager.Save) == "function" then
+        safeCallback(function() self.SaveManager:Save() end)
+    end
+end
+
+function Library:OnUnload(callback)
+    table.insert(self.UnloadCallbacks, callback)
+end
+
+function Library:UpdateBlur() end
+function Library:UpdateColorsUsingRegistry() end
+function Library:SetWatermarkVisibility() end
+function Library:SetKeybindVisibility() end
+function Library:SetWatermark() end
+
+local ControlMethods = {}
+ControlMethods.__index = ControlMethods
+local GroupMethods = {}
+GroupMethods.__index = GroupMethods
+local TabMethods = {}
+TabMethods.__index = TabMethods
+local TabboxMethods = {}
+TabboxMethods.__index = TabboxMethods
+local WindowMethods = {}
+WindowMethods.__index = WindowMethods
+
+function ControlMethods:AddTooltip(text)
+    self.Tooltip = text
+    return self
+end
+
+function ControlMethods:OnChanged(callback)
+    self.Changed = callback
+    return self
+end
+
+function ControlMethods:OnClick(callback)
+    self.Clicked = callback
+    return self
+end
+
+function ControlMethods:SetText(text)
+    self.Text = tostring(text or "")
+    return self
+end
+
+function ControlMethods:SetValue(value)
+    if self.Type == "Toggle" then
+        self.Value = value == true
+    elseif self.Type == "Slider" then
+        local numberValue = tonumber(value) or self.Min
+        self.Value = clamp(round(numberValue, self.Rounding), self.Min, self.Max)
+    elseif self.Type == "Dropdown" then
+        if self.Multi then
+            self.Value = type(value) == "table" and copyTable(value) or {}
+        else
+            self.Value = value
+        end
+    elseif self.Type == "Input" then
+        self.Value = tostring(value or "")
+    elseif self.Type == "KeyPicker" then
+        if type(value) == "table" then
+            self.Value = value[1] or value.Value or self.Value
+            self.Mode = value[2] or value.Mode or self.Mode
+        else
+            self.Value = value
+        end
+    elseif self.Type == "ColorPicker" then
+        self.Value = value or self.Value
+    end
+
+    safeCallback(self.Callback, self.Value)
+    safeCallback(self.Changed, self.Value)
+    return self
+end
+
+function ControlMethods:SetValueRGB(color, transparency)
+    if self.Type ~= "ColorPicker" then return self end
+    self.Value = color or self.Value
+    if transparency ~= nil then self.Transparency = transparency end
+    safeCallback(self.Callback, self.Value, self.Transparency)
+    safeCallback(self.Changed, self.Value, self.Transparency)
+    return self
+end
+
+function ControlMethods:SetValues(values)
+    if self.Type == "Dropdown" then self.Values = values or {} end
+    return self
+end
+
+function ControlMethods:GetState()
+    if self.Type ~= "KeyPicker" then return false end
+    local code = keyCode(self.Value)
+    if code == 0x01 then return ismouse1pressed() end
+    if code == 0x02 then return ismouse2pressed() end
+    return code ~= nil and iskeypressed(code)
+end
+
+function ControlMethods:GetActiveValues()
+    if self.Type ~= "Dropdown" then return {} end
+    if not self.Multi then return self.Value ~= nil and { self.Value } or {} end
+    local active = {}
+    for _, value in ipairs(self.Values or {}) do
+        if self.Value[value] == true then table.insert(active, value) end
+    end
+    return active
+end
+
+function ControlMethods:SetKeybindMode(mode)
+    if self.Type == "KeyPicker" then self.Mode = mode or self.Mode end
+    return self
+end
+
+function ControlMethods:GetTransparency()
+    return self.Transparency or 0
+end
+
+function ControlMethods:OnTransparencyChanged(callback)
+    self.TransparencyChanged = callback
+    return self
+end
+
+function ControlMethods:SetHSVFromRGB(color)
+    return self:SetValueRGB(color, self.Transparency)
+end
+
+function ControlMethods:GetValueFromXOffset(offset)
+    if self.Type ~= "Slider" then return self.Value end
+    local percent = clamp(tonumber(offset) or 0, 0, 1)
+    return self.Min + (self.Max - self.Min) * percent
+end
+
+function ControlMethods:UpdateColors() return self end
+function ControlMethods:Update() return self end
+function ControlMethods:RefreshKeybinds() return self end
+function ControlMethods:Display() return self end
+function ControlMethods:BuildDropdownList() return self end
+function ControlMethods:CloseDropdown()
+    if self.Window and self.Window.OpenDropdown == self then self.Window.OpenDropdown = nil end
+    return self
+end
+function ControlMethods:OpenDropdown()
+    if self.Window and self.Type == "Dropdown" then self.Window.OpenDropdown = self end
+    return self
+end
+function ControlMethods:DoClick()
+    if self.Type == "Button" then safeCallback(self.Callback) end
+    return self
+end
+
+function ControlMethods:AddKeyPicker(id, info)
+    return self.Group:_addKeyPicker(id, info or {}, self)
+end
+
+function ControlMethods:AddColorPicker(id, info)
+    return self.Group:_addColorPicker(id, info or {}, self)
+end
+
+function ControlMethods:AddColorPickerAlpha(id, info)
+    info = info or {}
+    info.Transparency = info.Transparency or 0
+    return self.Group:_addColorPicker(id, info, self)
+end
+
+function ControlMethods:AddButton(...)
+    if not self.Group then return nil end
+    return self.Group:AddButton(...)
+end
+
+local function register(group, control)
+    control.Group = group
+    control.Window = group.Window
+    control.Visible = control.Visible ~= false
+    setmetatable(control, ControlMethods)
+    table.insert(group.Controls, control)
+    return control
+end
+
+function GroupMethods:_new(typeName, data)
+    data = data or {}
+    data.Type = typeName
+    return register(self, data)
+end
+
+function GroupMethods:AddBlank(size)
+    self:_new("Blank", { Height = size or 5 })
+    return self
+end
+
+function GroupMethods:AddLabel(text, wraps)
+    return self:_new("Label", { Text = tostring(text or ""), Wrap = wraps == true, Height = wraps and 32 or 18 })
+end
+
+function GroupMethods:AddDivider()
+    return self:_new("Divider", { Height = 10 })
+end
+
+function GroupMethods:AddButton(...)
+    local first = select(1, ...)
+    local data = {}
+    if type(first) == "table" then
+        data.Text = first.Text or "Button"
+        data.Callback = first.Func or first.Callback
+        data.DoubleClick = first.DoubleClick == true
+        data.Tooltip = first.Tooltip
+    else
+        data.Text = tostring(first or "Button")
+        data.Callback = select(2, ...)
+    end
+    return self:_new("Button", data)
+end
+
+function GroupMethods:AddToggle(id, info)
+    info = info or {}
+    local control = self:_new("Toggle", {
+        Id = id, Text = info.Text or id, Value = info.Default == true,
+        Callback = info.Callback, Risky = info.Risky == true, Tooltip = info.Tooltip
+    })
+    Toggles[id] = control
+    return control
+end
+
+function GroupMethods:AddSlider(id, info)
+    info = info or {}
+    local control = self:_new("Slider", {
+        Id = id, Text = info.Text or id, Min = info.Min or 0, Max = info.Max or 100,
+        Rounding = info.Rounding or 0, Compact = info.Compact == true,
+        Suffix = info.Suffix or "", Callback = info.Callback,
+        Value = info.Default ~= nil and info.Default or (info.Min or 0), Tooltip = info.Tooltip
+    })
+    control.Value = clamp(round(control.Value, control.Rounding), control.Min, control.Max)
+    Options[id] = control
+    return control
+end
+
+function GroupMethods:AddDropdown(id, info)
+    info = info or {}
+    local control = self:_new("Dropdown", {
+        Id = id, Text = info.Text or id, Values = info.Values or {}, Multi = info.Multi == true,
+        AllowNull = info.AllowNull == true, Callback = info.Callback,
+        Value = info.Multi and (type(info.Default) == "table" and copyTable(info.Default) or {}) or info.Default,
+        Tooltip = info.Tooltip, SpecialType = info.SpecialType
+    })
+    if control.Value == nil and not control.AllowNull and #control.Values > 0 then control.Value = control.Values[1] end
+    Options[id] = control
+    return control
+end
+
+function GroupMethods:AddInput(id, info)
+    info = info or {}
+    local control = self:_new("Input", {
+        Id = id, Text = info.Text or id, Value = tostring(info.Default or ""),
+        Numeric = info.Numeric == true, Finished = info.Finished == true,
+        Callback = info.Callback, Placeholder = info.Placeholder or "", Tooltip = info.Tooltip
+    })
+    Options[id] = control
+    return control
+end
+
+function GroupMethods:_addKeyPicker(id, info, attached)
+    local control = self:_new("KeyPicker", {
+        Id = id, Text = info.Text or (attached and attached.Text) or id,
+        Value = info.Default or "None", Mode = info.Mode or "Toggle",
+        Modes = info.Modes or { "Always", "Toggle", "Hold" }, Callback = info.Callback,
+        SyncToggleState = info.SyncToggleState == true, NoUI = info.NoUI == true,
+        Attached = attached, Tooltip = info.Tooltip, LastState = false
+    })
+    Options[id] = control
+    table.insert(Library.KeyPickerList, control)
+    return control
+end
+
+function GroupMethods:AddKeyPicker(id, info)
+    return self:_addKeyPicker(id, info or {}, nil)
+end
+
+function GroupMethods:_addColorPicker(id, info, attached)
+    local control = self:_new("ColorPicker", {
+        Id = id, Text = info.Title or info.Text or (attached and attached.Text) or id,
+        Value = info.Default or Color3.new(1, 1, 1), Transparency = info.Transparency or 0,
+        Callback = info.Callback, Attached = attached, Tooltip = info.Tooltip, PaletteIndex = 1
+    })
+    Options[id] = control
+    return control
+end
+
+function GroupMethods:AddColorPicker(id, info)
+    return self:_addColorPicker(id, info or {}, nil)
+end
+
+function GroupMethods:AddColorPickerAlpha(id, info)
+    info = info or {}
+    info.Transparency = info.Transparency or 0
+    return self:_addColorPicker(id, info, nil)
+end
+
+function GroupMethods:AddDependencyBox()
+    local dependency = self:_new("Dependency", { Controls = {}, Dependencies = {} })
+    dependency.Window = self.Window
+    dependency.Group = self
+    setmetatable(dependency, GroupMethods)
+    return dependency
+end
+
+function GroupMethods:SetupDependencies(dependencies)
+    self.Dependencies = dependencies or {}
+    return self
+end
+
+function GroupMethods:_dependenciesMet()
+    for _, dependency in pairs(self.Dependencies or {}) do
+        local option = dependency[1]
+        local expected = dependency[2]
+        if not option or option.Value ~= expected then return false end
+    end
+    return true
+end
+
+function GroupMethods:AddRow(columns)
+    local results = {}
+    for i = 1, math.max(1, tonumber(columns) or 2) do results[i] = self end
+    return unpack(results)
+end
+
+function GroupMethods:Resize() return self end
+
+function TabMethods:AddGroupbox(info)
+    info = info or {}
+    local group = setmetatable({
+        Name = info.Name or "Groupbox", Side = info.Side == 2 and 2 or 1,
+        Controls = {}, Window = self.Window, Tab = self, Type = "Groupbox"
+    }, GroupMethods)
+    table.insert(self.Groups, group)
+    self.Groupboxes[group.Name] = group
+    return group
+end
+
+function TabMethods:AddLeftGroupbox(name)
+    return self:AddGroupbox({ Name = name, Side = 1 })
+end
+
+function TabMethods:AddRightGroupbox(name)
+    return self:AddGroupbox({ Name = name, Side = 2 })
+end
+
+function TabMethods:AddTabbox(info)
+    info = info or {}
+    local tabbox = setmetatable({
+        Name = info.Name or "", Side = info.Side == 2 and 2 or 1,
+        Tabs = {}, TabList = {}, Window = self.Window, ParentTab = self,
+        Active = nil, Type = "Tabbox"
+    }, TabboxMethods)
+    table.insert(self.TabboxesList, tabbox)
+    self.Tabboxes[tabbox.Name] = tabbox
+    return tabbox
+end
+
+function TabMethods:AddLeftTabbox(name)
+    return self:AddTabbox({ Name = name, Side = 1 })
+end
+
+function TabMethods:AddRightTabbox(name)
+    return self:AddTabbox({ Name = name, Side = 2 })
+end
+
+function TabMethods:ShowTab()
+    self.Window.ActiveTab = self
+    return self
+end
+
+function TabMethods:HideTab() return self end
+function TabMethods:SetLayoutOrder(order) self.LayoutOrder = order return self end
+
+function TabboxMethods:AddTab(name)
+    local page = setmetatable({
+        Name = name, Controls = {}, Window = self.Window, Tabbox = self,
+        Type = "TabboxPage", Dependencies = {}
+    }, GroupMethods)
+    self.Tabs[name] = page
+    table.insert(self.TabList, page)
+    if not self.Active then self.Active = page end
+    function page:Show() self.Tabbox.Active = self return self end
+    function page:Hide() return self end
+    return page
+end
+
+local function controlHeight(control)
+    if control.Visible == false then return 0 end
+    if control.Type == "Dependency" then
+        if not control:_dependenciesMet() then return 0 end
+        local total = 0
+        for _, child in ipairs(control.Controls) do total = total + controlHeight(child) end
+        return total
+    end
+    if control.Type == "Blank" then return control.Height or 5 end
+    if control.Type == "Label" then return control.Height or 18 end
+    if control.Type == "Divider" then return 10 end
+    if control.Type == "Button" then return 24 end
+    if control.Type == "Toggle" then return 20 end
+    if control.Type == "Slider" then return 40 end
+    if control.Type == "Dropdown" then return 40 end
+    if control.Type == "Input" then return 40 end
+    if control.Type == "KeyPicker" or control.Type == "ColorPicker" then return 22 end
+    return 20
+end
+
+local function controlsHeight(controls)
+    local total = 0
+    for _, control in ipairs(controls or {}) do total = total + controlHeight(control) end
+    return total
+end
+
+local function displayDropdown(control)
+    if control.Multi then
+        local selected = {}
+        for _, value in ipairs(control.Values) do
+            if control.Value[value] == true then table.insert(selected, tostring(value)) end
+        end
+        return #selected > 0 and table.concat(selected, ", ") or "None"
+    end
+    return control.Value ~= nil and tostring(control.Value) or "None"
+end
+
+function WindowMethods:_draw(drawType, properties)
+    return drawing(drawType, properties, self)
+end
+
+function WindowMethods:_ensureFrame()
+    if self.Frame then return end
+    self.Frame = {
+        Background = self:_draw("Square", { Filled = true, Color = Library.BackgroundColor, ZIndex = 1 }),
+        Header = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 2 }),
+        Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 5 }),
+        InnerBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 }),
+        Accent = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 6 }),
+        Title = self:_draw("Text", { Text = self.Title, Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 7 }),
+        TabLine = self:_draw("Line", { Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 })
+    }
+end
+
+function WindowMethods:_ensureTabPack(tab)
+    if tab._pack then return tab._pack end
+    tab._pack = {
+        Background = self:_draw("Square", { Filled = true, Color = Library.BackgroundColor, ZIndex = 3 }),
+        Text = self:_draw("Text", { Text = tab.Name, Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 7 }),
+        Accent = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 8 })
+    }
+    return tab._pack
+end
+
+function WindowMethods:_ensureGroupPack(group)
+    if group._pack then return group._pack end
+    group._pack = {
+        Background = self:_draw("Square", { Filled = true, Color = Library.BackgroundColor, ZIndex = 2 }),
+        Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 }),
+        Inner = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 3 }),
+        Accent = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 5 }),
+        Title = self:_draw("Text", { Text = group.Name or "", Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 6 })
+    }
+    return group._pack
+end
+
+function WindowMethods:_ensureControlPack(control)
+    if control._pack then return control._pack end
+    local pack = {}
+
+    if control.Type == "Label" then
+        pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 8 })
+    elseif control.Type == "Divider" then
+        pack.Line = self:_draw("Line", { Thickness = 1, Color = Library.OutlineColor, ZIndex = 7 })
+    elseif control.Type == "Button" then
+        pack.Background = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 7 })
+        pack.Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 8 })
+        pack.InnerBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 9 })
+        pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 10 })
+    elseif control.Type == "Toggle" then
+        pack.Outer = self:_draw("Square", { Filled = true, Color = Library.Black, ZIndex = 7 })
+        pack.Inner = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 8 })
+        pack.Fill = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 9 })
+        pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 9 })
+    elseif control.Type == "Slider" then
+        pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 8 })
+        pack.Value = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 8 })
+        pack.Bar = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 7 })
+        pack.Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 8 })
+        pack.Fill = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 9 })
+    elseif control.Type == "Dropdown" or control.Type == "Input" or control.Type == "KeyPicker" then
+        pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 8 })
+        pack.Box = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 7 })
+        pack.Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 8 })
+        pack.Value = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 9 })
+    elseif control.Type == "ColorPicker" then
+        pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 8 })
+        pack.Swatch = self:_draw("Square", { Filled = true, Color = control.Value, ZIndex = 8 })
+        pack.Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 9 })
+    end
+
+    control._pack = pack
+    return pack
+end
+
+function WindowMethods:_renderControl(control, x, y, width, activeList)
+    if control.Visible == false then return y end
+    if control.Type == "Dependency" then
+        if not control:_dependenciesMet() then return y end
+        for _, child in ipairs(control.Controls) do
+            y = self:_renderControl(child, x, y, width, activeList)
+        end
+        return y
+    end
+
+    local height = controlHeight(control)
+    if height <= 0 then return y end
+    control._rect = { x = x, y = y, w = width, h = height }
+    table.insert(activeList, control)
+
+    if control.Type == "Blank" then return y + height end
+
+    local pack = self:_ensureControlPack(control)
+    if control.Type == "Label" then
+        pack.Text.Text = control.Text or ""
+        pack.Text.Position = Vector2.new(x, y + 1)
+        pack.Text.Visible = true
+
+    elseif control.Type == "Divider" then
+        pack.Line.From = Vector2.new(x, y + 4)
+        pack.Line.To = Vector2.new(x + width, y + 4)
+        pack.Line.Visible = true
+
+    elseif control.Type == "Button" then
+        local hovered = inside(self.MousePosition, control._rect)
+        pack.Background.Position = Vector2.new(x, y + 2)
+        pack.Background.Size = Vector2.new(width, 20)
+        pack.Background.Color = Library.MainColor
+        pack.Background.Visible = true
+        pack.Border.Position = Vector2.new(x, y + 2)
+        pack.Border.Size = Vector2.new(width, 20)
+        pack.Border.Color = hovered and Library.AccentColor or Library.Black
+        pack.Border.Visible = true
+        pack.InnerBorder.Position = Vector2.new(x + 1, y + 3)
+        pack.InnerBorder.Size = Vector2.new(width - 2, 18)
+        pack.InnerBorder.Visible = true
+        pack.Text.Text = control.Text or "Button"
+        pack.Text.Position = Vector2.new(x + width / 2, y + 7)
+        pack.Text.Visible = true
+
+    elseif control.Type == "Toggle" then
+        local boxY = y + 3
+        pack.Outer.Position = Vector2.new(x, boxY)
+        pack.Outer.Size = Vector2.new(14, 14)
+        pack.Outer.Visible = true
+        pack.Inner.Position = Vector2.new(x + 1, boxY + 1)
+        pack.Inner.Size = Vector2.new(12, 12)
+        pack.Inner.Visible = true
+        pack.Fill.Position = Vector2.new(x + 3, boxY + 3)
+        pack.Fill.Size = Vector2.new(8, 8)
+        pack.Fill.Color = control.Risky and Library.RiskColor or Library.AccentColor
+        pack.Fill.Visible = control.Value == true
+        pack.Text.Text = control.Text or control.Id
+        pack.Text.Color = control.Risky and Library.RiskColor or Library.FontColor
+        pack.Text.Position = Vector2.new(x + 20, y + 2)
+        pack.Text.Visible = true
+
+    elseif control.Type == "Slider" then
+        local percent = (control.Value - control.Min) / math.max(0.0001, control.Max - control.Min)
+        pack.Text.Text = control.Text or control.Id
+        pack.Text.Position = Vector2.new(x, y)
+        pack.Text.Visible = true
+        pack.Value.Text = tostring(control.Value) .. tostring(control.Suffix or "")
+        pack.Value.Position = Vector2.new(x + width - 30, y + 1)
+        pack.Value.Visible = true
+        pack.Bar.Position = Vector2.new(x, y + 20)
+        pack.Bar.Size = Vector2.new(width, 13)
+        pack.Bar.Visible = true
+        pack.Border.Position = Vector2.new(x, y + 20)
+        pack.Border.Size = Vector2.new(width, 13)
+        pack.Border.Visible = true
+        pack.Fill.Position = Vector2.new(x + 1, y + 21)
+        pack.Fill.Size = Vector2.new(math.max(0, (width - 2) * percent), 11)
+        pack.Fill.Visible = true
+        control._barRect = { x = x, y = y + 20, w = width, h = 13 }
+
+    elseif control.Type == "Dropdown" or control.Type == "Input" then
+        pack.Text.Text = control.Text or control.Id
+        pack.Text.Position = Vector2.new(x, y)
+        pack.Text.Visible = true
+        pack.Box.Position = Vector2.new(x, y + 17)
+        pack.Box.Size = Vector2.new(width, 19)
+        pack.Box.Visible = true
+        pack.Border.Position = Vector2.new(x, y + 17)
+        pack.Border.Size = Vector2.new(width, 19)
+        pack.Border.Color = self.CaptureInput == control and Library.AccentColor or Library.OutlineColor
+        pack.Border.Visible = true
+        local text
+        if control.Type == "Dropdown" then
+            text = displayDropdown(control)
+        else
+            text = control.Value ~= "" and control.Value or control.Placeholder
+            if self.CaptureInput == control then text = text .. "_" end
+        end
+        pack.Value.Text = text
+        pack.Value.Position = Vector2.new(x + width / 2, y + 21)
+        pack.Value.Visible = true
+        control._boxRect = { x = x, y = y + 17, w = width, h = 19 }
+
+    elseif control.Type == "KeyPicker" then
+        pack.Text.Text = control.Text or control.Id
+        pack.Text.Position = Vector2.new(x, y + 2)
+        pack.Text.Visible = not control.NoUI
+        local boxW = 80
+        local boxX = x + width - boxW
+        pack.Box.Position = Vector2.new(boxX, y + 1)
+        pack.Box.Size = Vector2.new(boxW, 18)
+        pack.Box.Visible = not control.NoUI
+        pack.Border.Position = Vector2.new(boxX, y + 1)
+        pack.Border.Size = Vector2.new(boxW, 18)
+        pack.Border.Color = self.CaptureKey == control and Library.AccentColor or Library.OutlineColor
+        pack.Border.Visible = not control.NoUI
+        pack.Value.Text = self.CaptureKey == control and "[...]" or ("[" .. keyName(control.Value) .. "]")
+        pack.Value.Position = Vector2.new(boxX + boxW / 2, y + 5)
+        pack.Value.Visible = not control.NoUI
+        control._boxRect = { x = boxX, y = y + 1, w = boxW, h = 18 }
+
+    elseif control.Type == "ColorPicker" then
+        pack.Text.Text = control.Text or control.Id
+        pack.Text.Position = Vector2.new(x, y + 2)
+        pack.Text.Visible = true
+        pack.Swatch.Position = Vector2.new(x + width - 38, y + 2)
+        pack.Swatch.Size = Vector2.new(38, 16)
+        pack.Swatch.Color = control.Value
+        pack.Swatch.Visible = true
+        pack.Border.Position = Vector2.new(x + width - 38, y + 2)
+        pack.Border.Size = Vector2.new(38, 16)
+        pack.Border.Visible = true
+        control._boxRect = { x = x + width - 38, y = y + 2, w = 38, h = 16 }
+    end
+
+    return y + height
+end
+
+function WindowMethods:_renderGroup(group, x, y, width, activeList)
+    local pack = self:_ensureGroupPack(group)
+    local height = 26 + controlsHeight(group.Controls)
+    group._rect = { x = x, y = y, w = width, h = height }
+
+    pack.Background.Position = Vector2.new(x, y)
+    pack.Background.Size = Vector2.new(width, height)
+    pack.Background.Visible = true
+    pack.Border.Position = Vector2.new(x, y)
+    pack.Border.Size = Vector2.new(width, height)
+    pack.Border.Visible = true
+    pack.Inner.Position = Vector2.new(x + 1, y + 1)
+    pack.Inner.Size = Vector2.new(width - 2, height - 2)
+    pack.Inner.Visible = true
+    pack.Accent.Position = Vector2.new(x + 1, y + 1)
+    pack.Accent.Size = Vector2.new(width - 2, 2)
+    pack.Accent.Visible = true
+    pack.Title.Text = group.Name or ""
+    pack.Title.Position = Vector2.new(x + 6, y + 5)
+    pack.Title.Visible = true
+
+    local controlY = y + 23
+    for _, control in ipairs(group.Controls) do
+        controlY = self:_renderControl(control, x + 7, controlY, width - 14, activeList)
+    end
+    return height
+end
+
+function WindowMethods:_ensureTabboxPack(tabbox)
+    if tabbox._pack then return tabbox._pack end
+    tabbox._pack = {
+        Background = self:_draw("Square", { Filled = true, Color = Library.BackgroundColor, ZIndex = 2 }),
+        Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 })
+    }
+    return tabbox._pack
+end
+
+function WindowMethods:_renderTabbox(tabbox, x, y, width, activeList)
+    local pack = self:_ensureTabboxPack(tabbox)
+    local active = tabbox.Active
+    local height = 25 + (active and controlsHeight(active.Controls) or 0)
+    tabbox._rect = { x = x, y = y, w = width, h = height }
+    pack.Background.Position = Vector2.new(x, y)
+    pack.Background.Size = Vector2.new(width, height)
+    pack.Background.Visible = true
+    pack.Border.Position = Vector2.new(x, y)
+    pack.Border.Size = Vector2.new(width, height)
+    pack.Border.Visible = true
+
+    local count = #tabbox.TabList
+    if count > 0 then
+        local tabWidth = width / count
+        for index, page in ipairs(tabbox.TabList) do
+            if not page._tabPack then
+                page._tabPack = {
+                    Background = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 5 }),
+                    Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 7 }),
+                    Accent = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 8 })
+                }
+            end
+            local px = x + (index - 1) * tabWidth
+            page._tabRect = { x = px, y = y, w = tabWidth, h = 20 }
+            page._tabPack.Background.Position = Vector2.new(px, y)
+            page._tabPack.Background.Size = Vector2.new(tabWidth, 20)
+            page._tabPack.Background.Color = page == active and Library.BackgroundColor or Library.MainColor
+            page._tabPack.Background.Visible = true
+            page._tabPack.Text.Text = page.Name
+            page._tabPack.Text.Position = Vector2.new(px + tabWidth / 2, y + 5)
+            page._tabPack.Text.Visible = true
+            page._tabPack.Accent.Position = Vector2.new(px, y)
+            page._tabPack.Accent.Size = Vector2.new(tabWidth, 2)
+            page._tabPack.Accent.Visible = page == active
+        end
+    end
+
+    if active then
+        local controlY = y + 23
+        for _, control in ipairs(active.Controls) do
+            controlY = self:_renderControl(control, x + 7, controlY, width - 14, activeList)
+        end
+    end
+    return height
+end
+
+function WindowMethods:_renderDropdownOverlay(control)
+    if not control or not control._boxRect then return end
+    if not control._listPack then
+        control._listPack = {
+            Background = self:_draw("Square", { Filled = true, Color = Library.BackgroundColor, ZIndex = 30 }),
+            Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 31 }),
+            Items = {}
+        }
+    end
+
+    local count = math.min(8, #control.Values)
+    local x, y, width = control._boxRect.x, control._boxRect.y + control._boxRect.h + 1, control._boxRect.w
+    local height = count * 20 + 2
+    control._listRect = { x = x, y = y, w = width, h = height }
+    control._itemRects = {}
+    control._listPack.Background.Position = Vector2.new(x, y)
+    control._listPack.Background.Size = Vector2.new(width, height)
+    control._listPack.Background.Visible = true
+    control._listPack.Border.Position = Vector2.new(x, y)
+    control._listPack.Border.Size = Vector2.new(width, height)
+    control._listPack.Border.Visible = true
+
+    for index = 1, count do
+        if not control._listPack.Items[index] then
+            control._listPack.Items[index] = {
+                Background = self:_draw("Square", { Filled = true, Color = Library.BackgroundColor, ZIndex = 32 }),
+                Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 33 })
+            }
+        end
+        local item = control._listPack.Items[index]
+        local itemY = y + 1 + (index - 1) * 20
+        local value = control.Values[index]
+        local selected = control.Multi and control.Value[value] == true or (not control.Multi and control.Value == value)
+        control._itemRects[index] = { x = x + 1, y = itemY, w = width - 2, h = 20 }
+        item.Background.Position = Vector2.new(x + 1, itemY)
+        item.Background.Size = Vector2.new(width - 2, 20)
+        item.Background.Color = selected and Library.MainColor or Library.BackgroundColor
+        item.Background.Visible = true
+        item.Text.Text = (selected and "[x] " or "") .. tostring(value)
+        item.Text.Color = selected and Library.AccentColor or Library.FontColor
+        item.Text.Position = Vector2.new(x + 6, itemY + 3)
+        item.Text.Visible = true
+    end
+end
+
+function WindowMethods:_render()
+    self:_ensureFrame()
+    for _, object in ipairs(self._drawings) do object.Visible = false end
+    if not self.Visible or not Library.Toggled or Library._unloaded then return end
+
+    self.MousePosition = Vector2.new(Mouse.X, Mouse.Y)
+    local position, size = self.Position, self.Size
+    local frame = self.Frame
+
+    frame.Background.Position = position
+    frame.Background.Size = size
+    frame.Background.Visible = true
+    frame.Header.Position = Vector2.new(position.X + 1, position.Y + 1)
+    frame.Header.Size = Vector2.new(size.X - 2, 24)
+    frame.Header.Visible = true
+    frame.Border.Position = position
+    frame.Border.Size = size
+    frame.Border.Visible = true
+    frame.InnerBorder.Position = Vector2.new(position.X + 1, position.Y + 1)
+    frame.InnerBorder.Size = Vector2.new(size.X - 2, size.Y - 2)
+    frame.InnerBorder.Visible = true
+    frame.Accent.Position = Vector2.new(position.X + 1, position.Y + 1)
+    frame.Accent.Size = Vector2.new(size.X - 2, 2)
+    frame.Accent.Visible = true
+    frame.Title.Text = self.Title
+    frame.Title.Position = Vector2.new(position.X + 7, position.Y + 6)
+    frame.Title.Visible = true
+    frame.TabLine.From = Vector2.new(position.X + 1, position.Y + 48)
+    frame.TabLine.To = Vector2.new(position.X + size.X - 1, position.Y + 48)
+    frame.TabLine.Visible = true
+
+    self._headerRect = { x = position.X, y = position.Y, w = size.X, h = 24 }
+    local tabCount = #self.TabList
+    if tabCount > 0 then
+        local tabWidth = (size.X - 12) / tabCount
+        for index, tab in ipairs(self.TabList) do
+            local pack = self:_ensureTabPack(tab)
+            local x = position.X + 6 + (index - 1) * tabWidth
+            tab._rect = { x = x, y = position.Y + 27, w = tabWidth, h = 20 }
+            pack.Background.Position = Vector2.new(x, position.Y + 27)
+            pack.Background.Size = Vector2.new(tabWidth, 20)
+            pack.Background.Color = tab == self.ActiveTab and Library.MainColor or Library.BackgroundColor
+            pack.Background.Visible = true
+            pack.Text.Text = tab.Name
+            pack.Text.Position = Vector2.new(x + tabWidth / 2, position.Y + 32)
+            pack.Text.Visible = true
+            pack.Accent.Position = Vector2.new(x, position.Y + 27)
+            pack.Accent.Size = Vector2.new(tabWidth, 2)
+            pack.Accent.Visible = tab == self.ActiveTab
+        end
+    end
+
+    self._activeControls = {}
+    self._activeTabboxPages = {}
+    local activeTab = self.ActiveTab
+    if activeTab then
+        local gap = 8
+        local columnWidth = math.floor((size.X - 24) / 2)
+        local leftX = position.X + 8
+        local rightX = leftX + columnWidth + gap
+        local leftY = position.Y + 56
+        local rightY = position.Y + 56
+
+        for _, group in ipairs(activeTab.Groups) do
+            if group.Side == 1 then
+                local height = self:_renderGroup(group, leftX, leftY, columnWidth, self._activeControls)
+                leftY = leftY + height + 8
+            else
+                local height = self:_renderGroup(group, rightX, rightY, columnWidth, self._activeControls)
+                rightY = rightY + height + 8
+            end
+        end
+
+        for _, tabbox in ipairs(activeTab.TabboxesList) do
+            if tabbox.Side == 1 then
+                local height = self:_renderTabbox(tabbox, leftX, leftY, columnWidth, self._activeControls)
+                leftY = leftY + height + 8
+            else
+                local height = self:_renderTabbox(tabbox, rightX, rightY, columnWidth, self._activeControls)
+                rightY = rightY + height + 8
+            end
+            for _, page in ipairs(tabbox.TabList) do table.insert(self._activeTabboxPages, { Box = tabbox, Page = page }) end
+        end
+    end
+
+    if self.OpenDropdown then self:_renderDropdownOverlay(self.OpenDropdown) end
+end
+
+local palette = {
+    Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 70, 70),
+    Color3.fromRGB(255, 160, 40), Color3.fromRGB(255, 230, 60),
+    Color3.fromRGB(70, 220, 90), Color3.fromRGB(60, 210, 220),
+    Color3.fromRGB(70, 120, 255), Color3.fromRGB(170, 80, 255),
+    Color3.fromRGB(255, 80, 190)
+}
+
+function WindowMethods:_handleDropdownClick(mousePosition)
+    local control = self.OpenDropdown
+    if not control then return false end
+    for index, rect in ipairs(control._itemRects or {}) do
+        if inside(mousePosition, rect) then
+            local value = control.Values[index]
+            if control.Multi then
+                control.Value[value] = not (control.Value[value] == true)
+            else
+                control.Value = value
+                self.OpenDropdown = nil
+            end
+            safeCallback(control.Callback, control.Value)
+            safeCallback(control.Changed, control.Value)
+            return true
+        end
+    end
+    if not inside(mousePosition, control._listRect) and not inside(mousePosition, control._boxRect) then
+        self.OpenDropdown = nil
+    end
+    return false
+end
+
+function WindowMethods:_startKeyCapture(control)
+    self.CaptureKey = control
+    self.CaptureReady = false
+end
+
+function WindowMethods:_updateKeyCapture()
+    local control = self.CaptureKey
+    if not control then return false end
+    if not self.CaptureReady then
+        if not ismouse1pressed() then self.CaptureReady = true end
+        return true
+    end
+
+    local chosen = nil
+    if ismouse2pressed() then chosen = "MB2" end
+    if not chosen then
+        for code = 1, 255 do
+            if iskeypressed(code) then chosen = keyName(code); break end
+        end
+    end
+    if chosen then
+        if chosen == "Escape" then chosen = "None" end
+        control.Value = chosen
+        safeCallback(control.Callback, control.Value)
+        safeCallback(control.Changed, control.Value)
+        self.CaptureKey = nil
+        self.CaptureReady = false
+    end
+    return true
+end
+
+function WindowMethods:_updateInputCapture()
+    local control = self.CaptureInput
+    if not control then return false end
+    if not self.CaptureReady then
+        if not ismouse1pressed() then self.CaptureReady = true end
+        return true
+    end
+
+    self._inputKeys = self._inputKeys or {}
+    local enter = iskeypressed(0x0D)
+    if enter and not self._inputKeys[0x0D] then
+        self.CaptureInput = nil
+        safeCallback(control.Callback, control.Value)
+        safeCallback(control.Changed, control.Value)
+        self._inputKeys[0x0D] = true
+        return true
+    end
+    self._inputKeys[0x0D] = enter
+
+    local backspace = iskeypressed(0x08)
+    if backspace and not self._inputKeys[0x08] then
+        control.Value = string.sub(control.Value, 1, math.max(0, #control.Value - 1))
+        if not control.Finished then safeCallback(control.Callback, control.Value) end
+    end
+    self._inputKeys[0x08] = backspace
+
+    local space = iskeypressed(0x20)
+    if space and not self._inputKeys[0x20] and not control.Numeric then
+        control.Value = control.Value .. " "
+        if not control.Finished then safeCallback(control.Callback, control.Value) end
+    end
+    self._inputKeys[0x20] = space
+
+    for code = 0x30, 0x5A do
+        local valid = (code >= 0x30 and code <= 0x39) or (code >= 0x41 and code <= 0x5A and not control.Numeric)
+        if valid then
+            local pressed = iskeypressed(code)
+            if pressed and not self._inputKeys[code] then
+                control.Value = control.Value .. string.char(code)
+                if not control.Finished then safeCallback(control.Callback, control.Value) end
+            end
+            self._inputKeys[code] = pressed
+        end
+    end
+    return true
+end
+
+function WindowMethods:_updateKeyPickers()
+    for _, picker in ipairs(Library.KeyPickerList) do
+        if picker.Window == self and picker ~= self.CaptureKey then
+            local state = picker:GetState()
+            if picker.Mode == "Always" then state = true end
+
+            if picker.Mode == "Hold" then
+                if picker.Attached and picker.SyncToggleState and picker.Attached.Value ~= state then
+                    picker.Attached:SetValue(state)
+                end
+                if state ~= picker.LastState then safeCallback(picker.Callback, state) end
+            elseif picker.Mode == "Toggle" then
+                if state and not picker.LastState then
+                    if picker.Attached and picker.SyncToggleState then picker.Attached:SetValue(not picker.Attached.Value) end
+                    safeCallback(picker.Callback, true)
+                    safeCallback(picker.Clicked, true)
+                end
+            elseif picker.Mode == "Always" and not picker.LastState then
+                safeCallback(picker.Callback, true)
+            end
+            picker.LastState = state
+        end
+    end
+end
+
+function WindowMethods:Step()
+    if self.Destroyed or Library._unloaded then return end
+    self:_render()
+
+    local mousePosition = self.MousePosition or Vector2.new(Mouse.X, Mouse.Y)
+    local mouseDown = ismouse1pressed()
+    local mouseClick = mouseDown and not self.LastMouseDown
+
+    self:_updateKeyPickers()
+    if self:_updateKeyCapture() then self.LastMouseDown = mouseDown return end
+    if self:_updateInputCapture() then self.LastMouseDown = mouseDown return end
+
+    if self.SliderDrag then
+        if mouseDown then
+            local control = self.SliderDrag
+            local rect = control._barRect
+            if rect then
+                local percent = clamp((mousePosition.X - rect.x) / rect.w, 0, 1)
+                control:SetValue(control.Min + (control.Max - control.Min) * percent)
+            end
+        else
+            self.SliderDrag = nil
+        end
+    end
+
+    if self.Dragging then
+        if mouseDown then
+            local dx = mousePosition.X - self.DragStartMouse.X
+            local dy = mousePosition.Y - self.DragStartMouse.Y
+            self.Position = Vector2.new(self.DragStartPosition.X + dx, self.DragStartPosition.Y + dy)
+        else
+            self.Dragging = false
+        end
+    end
+
+    if mouseClick then
+        if self:_handleDropdownClick(mousePosition) then self.LastMouseDown = mouseDown return end
+
+        for _, tab in ipairs(self.TabList) do
+            if inside(mousePosition, tab._rect) then
+                self.ActiveTab = tab
+                self.OpenDropdown = nil
+                self.LastMouseDown = mouseDown
+                return
+            end
+        end
+
+        for _, entry in ipairs(self._activeTabboxPages or {}) do
+            if inside(mousePosition, entry.Page._tabRect) then
+                entry.Box.Active = entry.Page
+                self.OpenDropdown = nil
+                self.LastMouseDown = mouseDown
+                return
+            end
+        end
+
+        local handled = false
+        for _, control in ipairs(self._activeControls or {}) do
+            if not handled and inside(mousePosition, control._rect) then
+                if control.Type == "Toggle" then
+                    control:SetValue(not control.Value)
+                    handled = true
+                elseif control.Type == "Button" then
+                    safeCallback(control.Callback)
+                    safeCallback(control.Clicked)
+                    handled = true
+                elseif control.Type == "Slider" and inside(mousePosition, control._barRect) then
+                    self.SliderDrag = control
+                    local percent = clamp((mousePosition.X - control._barRect.x) / control._barRect.w, 0, 1)
+                    control:SetValue(control.Min + (control.Max - control.Min) * percent)
+                    handled = true
+                elseif control.Type == "Dropdown" and inside(mousePosition, control._boxRect) then
+                    self.OpenDropdown = self.OpenDropdown == control and nil or control
+                    handled = true
+                elseif control.Type == "Input" and inside(mousePosition, control._boxRect) then
+                    self.CaptureInput = control
+                    self.CaptureReady = false
+                    handled = true
+                elseif control.Type == "KeyPicker" and inside(mousePosition, control._boxRect) then
+                    self:_startKeyCapture(control)
+                    handled = true
+                elseif control.Type == "ColorPicker" and inside(mousePosition, control._boxRect) then
+                    control.PaletteIndex = (control.PaletteIndex % #palette) + 1
+                    control:SetValueRGB(palette[control.PaletteIndex], control.Transparency)
+                    handled = true
+                end
+            end
+        end
+
+        if not handled and inside(mousePosition, self._headerRect) then
+            self.Dragging = true
+            self.DragStartMouse = mousePosition
+            self.DragStartPosition = self.Position
+        end
+    end
+
+    self.LastMouseDown = mouseDown
+end
+
+function WindowMethods:SetWindowTitle(title)
+    self.Title = tostring(title or "")
+    return self
+end
+
+function WindowMethods:AddTab(name)
+    local tab = setmetatable({
+        Name = tostring(name or ("Tab " .. tostring(#self.TabList + 1))),
+        Window = self, Groups = {}, Groupboxes = {}, Tabboxes = {}, TabboxesList = {},
+        LayoutOrder = #self.TabList + 1
+    }, TabMethods)
+    table.insert(self.TabList, tab)
+    self.Tabs[tab.Name] = tab
+    if not self.ActiveTab then self.ActiveTab = tab end
+    return tab
+end
+
+function WindowMethods:Show()
+    self.Visible = true
+    Library.Toggled = true
+    return self
+end
+
+function WindowMethods:Hide()
+    self.Visible = false
+    return self
+end
+
+function WindowMethods:Toggle()
+    self.Visible = not self.Visible
+    return self.Visible
+end
+
+function WindowMethods:Destroy()
+    self.Destroyed = true
+    for _, object in ipairs(self._drawings) do removeDrawing(object) end
+end
+
+function Library:CreateWindow(...)
+    local first = select(1, ...)
+    local info
+    if type(first) == "table" then
+        info = first
+    else
+        info = { Title = tostring(first or "UE Matcha") }
+    end
+
+    local width, height = 620, 520
+    if info.Size then
+        pcall(function()
+            width = info.Size.X
+            height = info.Size.Y
+        end)
+    end
+    if type(info.Width) == "number" then width = info.Width end
+    if type(info.Height) == "number" then height = info.Height end
+
+    local position = Vector2.new(100, 100)
+    if info.Position then
+        pcall(function() position = Vector2.new(info.Position.X, info.Position.Y) end)
+    elseif info.Center ~= false then
+        pcall(function()
+            local camera = workspace.CurrentCamera
+            local viewport = camera.ViewportSize
+            position = Vector2.new((viewport.X - width) / 2, (viewport.Y - height) / 2)
+        end)
+    end
+
+    local window = setmetatable({
+        Title = info.Title or "UE Matcha",
+        Position = position,
+        Size = Vector2.new(width, height),
+        Visible = info.AutoShow ~= false,
+        Tabs = {}, TabList = {}, ActiveTab = nil,
+        _drawings = {}, _activeControls = {}, _activeTabboxPages = {},
+        LastMouseDown = false, Destroyed = false,
+        MousePosition = Vector2.new(Mouse.X, Mouse.Y)
+    }, WindowMethods)
+
+    table.insert(self.Windows, window)
+    self.Toggled = window.Visible
+
+    task.spawn(function()
+        while not Library._unloaded and not window.Destroyed do
+            local ok, err = pcall(function() window:Step() end)
+            if not ok then
+                warn("UE Matcha UI step error: " .. tostring(err))
+                task.wait(0.25)
+            else
+                task.wait()
+            end
+        end
+    end)
+
+    return window
+end
+
+function Library:Toggle()
+    self.Toggled = not self.Toggled
+    for _, window in ipairs(self.Windows) do
+        window.Visible = self.Toggled
+    end
+    return self.Toggled
+end
+
+function Library:Unload()
+    if self._unloaded then return end
+    self._unloaded = true
+    self.Toggled = false
+    for _, callback in ipairs(self.UnloadCallbacks) do safeCallback(callback) end
+    for _, object in ipairs(self._drawings) do removeDrawing(object) end
+    self.Unloaded = true
+end
+
+-- Compatibility no-ops for source-only registry/signal helpers.
+function Library:AddToRegistry(instance) return instance end
+function Library:RemoveFromRegistry(instance) return instance end
+function Library:GiveSignal(signal) return signal end
+function Library:AddToolTip(text, object) return object end
+function Library:MouseIsOverOpenedFrame() return false end
+function Library:IsMouseOverFrame() return false end
+function Library:UpdateDependencyBoxes() end
+function Library:SetNotifySide(side) self.NotifyConfig.Alignment = side end
+function Library:SetNotifyPosition(x, y)
+    self.NotifyConfig.PositionX = x or 0
+    self.NotifyConfig.PositionY = y or 40
+end
+function Library:ApplyGlow(instance) return instance end
+function Library:ApplyTextStroke(instance) return instance end
+function Library:MakeDraggable(instance) return instance end
+function Library:OnHighlight(instance) return instance end
+function Library:Create() return nil end
+function Library:CreateLabel() return nil end
+function Library:GetTextBounds(text, font, size)
+    local fontSize = tonumber(size) or self.FontSize
+    return #tostring(text or "") * fontSize * 0.55, fontSize + 2
+end
+
+Environment.Library = Library
+Environment.UELibrary = Library
+Environment.Toggles = Toggles
+Environment.Options = Options
+
+return Library
