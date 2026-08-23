@@ -154,6 +154,7 @@ local LAYOUT = {
     ContentTopY = 30,
     TabBarHeight = 22,
     TabHeight = 18,
+    TabWidthReduction = 3,
     FooterHeight = 20,
     PaddingX = 10,
     ColumnGap = 20,
@@ -1435,22 +1436,23 @@ function Window:_renderMainUI(statusData)
             local pack = UI.TabsDraw[tab.Id]
             local x = tabX + ((index - 1) * tabW)
             local w = (index == tabCount) and (availableW - ((index - 1) * tabW)) or tabW
-            tab._rect = { x = x, y = tabY, w = w, h = LAYOUT.TabHeight }
+            local visualW = math.max(1, w - LAYOUT.TabWidthReduction)
+            tab._rect = { x = x, y = tabY, w = visualW, h = LAYOUT.TabHeight }
 
             if pack then
                 local active = (tab.Id == self.ActiveTab)
                 pack.Bg.Position = Vector2.new(x, tabY)
-                pack.Bg.Size = Vector2.new(w, LAYOUT.TabHeight)
+                pack.Bg.Size = Vector2.new(visualW, LAYOUT.TabHeight)
                 pack.Bg.Color = active and Color3.fromRGB(28, 28, 28) or C.Header
                 pack.Bg.Visible = true
 
                 pack.Text.Text = tab.Name
-                pack.Text.Position = Vector2.new(x + (w / 2), tabY + 6)
+                pack.Text.Position = Vector2.new(x + (visualW / 2), tabY + 7)
                 pack.Text.Color = active and C.TextMain or C.TextDim
                 pack.Text.Visible = true
 
                 pack.Accent.Position = Vector2.new(x, tabY + LAYOUT.TabHeight - 2)
-                pack.Accent.Size = Vector2.new(w, 2)
+                pack.Accent.Size = Vector2.new(visualW, 2)
                 pack.Accent.Visible = active
             end
         end
