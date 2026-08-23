@@ -1426,34 +1426,33 @@ function Window:_renderMainUI(statusData)
 
     if self:_hasTabs() then
         local tabCount = #self.Tabs
-        -- Full-width tab strip: tabs run edge-to-edge across the window.
-        local tabX = pos.X
+        -- Center the complete tab row after reducing every tab's width.
+        local totalReduction = LAYOUT.TabWidthReduction * tabCount
+        local availableW = math.max(tabCount, size.X - totalReduction)
+        local tabX = pos.X + ((size.X - availableW) / 2)
         local tabY = pos.Y + LAYOUT.TopDividerY + 1
-        local availableW = size.X
         local tabW = math.max(1, math.floor(availableW / tabCount))
 
         for index, tab in ipairs(self.Tabs) do
             local pack = UI.TabsDraw[tab.Id]
             local x = tabX + ((index - 1) * tabW)
             local w = (index == tabCount) and (availableW - ((index - 1) * tabW)) or tabW
-            local visualW = math.max(1, w - LAYOUT.TabWidthReduction)
-            local visualX = x + (LAYOUT.TabWidthReduction / 2)
-            tab._rect = { x = visualX, y = tabY, w = visualW, h = LAYOUT.TabHeight }
+            tab._rect = { x = x, y = tabY, w = w, h = LAYOUT.TabHeight }
 
             if pack then
                 local active = (tab.Id == self.ActiveTab)
-                pack.Bg.Position = Vector2.new(visualX, tabY)
-                pack.Bg.Size = Vector2.new(visualW, LAYOUT.TabHeight)
+                pack.Bg.Position = Vector2.new(x, tabY)
+                pack.Bg.Size = Vector2.new(w, LAYOUT.TabHeight)
                 pack.Bg.Color = active and Color3.fromRGB(28, 28, 28) or C.Header
                 pack.Bg.Visible = true
 
                 pack.Text.Text = tab.Name
-                pack.Text.Position = Vector2.new(visualX + (visualW / 2), tabY + 7)
+                pack.Text.Position = Vector2.new(x + (w / 2), tabY + 7)
                 pack.Text.Color = active and C.TextMain or C.TextDim
                 pack.Text.Visible = true
 
-                pack.Accent.Position = Vector2.new(visualX, tabY + LAYOUT.TabHeight - 2)
-                pack.Accent.Size = Vector2.new(visualW, 2)
+                pack.Accent.Position = Vector2.new(x, tabY + LAYOUT.TabHeight - 2)
+                pack.Accent.Size = Vector2.new(w, 2)
                 pack.Accent.Visible = active
             end
         end
