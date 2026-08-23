@@ -133,6 +133,21 @@ local function setVisibleDeep(obj, visible)
     end
 end
 
+-- Recursively move Drawing objects onto a higher rendering layer.
+local function addZIndexDeep(obj, offset)
+    if obj == nil or offset == 0 then return end
+
+    local ok, zIndex = pcall(function() return obj.ZIndex end)
+    if ok and type(zIndex) == "number" then
+        pcall(function() obj.ZIndex = zIndex + offset end)
+        return
+    end
+
+    if type(obj) == "table" then
+        for _, value in pairs(obj) do addZIndexDeep(value, offset) end
+    end
+end
+
 
 local Library = {}
 Library.__index = Library
@@ -1009,10 +1024,18 @@ function Window:_initIfNeeded()
     self.Indicator:Init()
     self.ConfigMenu:Init()
 
+    local zOffset = self.Options.ZIndexOffset or 0
+    if zOffset ~= 0 then
+        addZIndexDeep(self.UI.Elements, zOffset)
+        addZIndexDeep(self.UI.TabsDraw, zOffset)
+        addZIndexDeep(self.UI.ControlsDraw, zOffset)
+        addZIndexDeep(self.Indicator.Elements, zOffset)
+        addZIndexDeep(self.ConfigMenu.Elements, zOffset)
+    end
 
     self.UI:SetVisible(self.Config.UIEnabled)
-    self.ConfigMenu:SetVisible(self.Config.UIEnabled)
-    self.Indicator:SetVisible(self.Config.IndicatorEnabled)
+    self.ConfigMenu:SetVisible(self.Options.SidePanels ~= false and self.Config.UIEnabled)
+    self.Indicator:SetVisible(self.Options.SidePanels ~= false and self.Config.IndicatorEnabled)
 
     self._initialized = true
     self._layoutDirty = true
@@ -1977,6 +2000,7 @@ function Window:CreatePopup(opts)
     popupOptions.UIKey = 0
     popupOptions.SidePanels = false
     popupOptions.IsPopup = true
+    popupOptions.ZIndexOffset = 100
     popupOptions.Visible = false
     popupOptions.BuiltInIndicatorToggle = false
     popupOptions.StartPos = popupOptions.StartPos or self.Style.Window.StartPos
@@ -2072,7 +2096,8 @@ function Library:CreateWindow(opts)
         Divider = (opts.Columns == 2) and (opts.Divider ~= false) or false,
         FixedHeight = requestedHeight,
         SidePanels = opts.SidePanels ~= false,
-        IsPopup = opts.IsPopup == true
+        IsPopup = opts.IsPopup == true,
+        ZIndexOffset = (type(opts.ZIndexOffset) == "number") and opts.ZIndexOffset or 0
     }
 
     if type(opts.Title) == "string" then w.Style.Window.Title = opts.Title end
