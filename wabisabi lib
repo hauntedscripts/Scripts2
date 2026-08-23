@@ -524,8 +524,8 @@ function Window:LoadConfig()
     end
 
     self.UI:SetVisible(self.Config.UIEnabled)
-    self.ConfigMenu:SetVisible(self.Config.UIEnabled)
-    self.Indicator:SetVisible(self.Config.IndicatorEnabled)
+    self.ConfigMenu:SetVisible(self.Options.SidePanels ~= false and self.Config.UIEnabled)
+    self.Indicator:SetVisible(self.Options.SidePanels ~= false and self.Config.IndicatorEnabled)
 
     self:_markLayoutDirty()
     self:_setConfigStatus("Loaded", self.Style.Colors.Status.Active, 1.25)
@@ -1272,6 +1272,7 @@ end -- close Window:_updateMainUIInteraction
 
 -- Indicator interaction
 function Window:_updateIndicatorInteraction(mousePos, m1, m1Click)
+    if self.Options.SidePanels == false then return end
     if not self.Config.IndicatorEnabled or not self.Indicator.Visible then return end
 
     local Ind = self.Indicator
@@ -1300,6 +1301,7 @@ end
 
 -- Config menu interaction
 function Window:_updateConfigMenuInteraction(mousePos, m1, m1Click)
+    if self.Options.SidePanels == false then return end
     if not self.Config.UIEnabled or not self.ConfigMenu.Visible then return end
 
     local CM = self.ConfigMenu
@@ -1720,7 +1722,7 @@ function Window:_renderIndicator()
     local E = Ind.Elements
     local C = self.Style.Colors
 
-    if not self.Config.IndicatorEnabled or not Ind.Visible then
+    if self.Options.SidePanels == false or not self.Config.IndicatorEnabled or not Ind.Visible then
         Ind:SetVisible(false)
         return
     end
@@ -1784,7 +1786,7 @@ function Window:_renderConfigMenu()
     local E = CM.Elements
     local C = self.Style.Colors
 
-    if not self.Config.UIEnabled or not CM.Visible then
+    if self.Options.SidePanels == false or not self.Config.UIEnabled or not CM.Visible then
         CM:SetVisible(false)
         return
     end
@@ -1932,6 +1934,59 @@ function Window:SetBind(id, keycode)
     return false
 end
 
+function Window:IsVisible()
+    return self.Config.UIEnabled == true
+end
+
+function Window:Show()
+    self.Config.UIEnabled = true
+    if self.Options.IsPopup and self.ParentWindow and self.ParentWindow._initialized then
+        self:_initIfNeeded()
+        local parentPos = self.ParentWindow.UI.Position
+        local parentSize = self.ParentWindow.UI.Size
+        local popupSize = self.UI.Size
+        self.UI.Position = Vector2.new(
+            parentPos.X + ((parentSize.X - popupSize.X) / 2),
+            parentPos.Y + ((parentSize.Y - popupSize.Y) / 2)
+        )
+        self:_markLayoutDirty()
+    end
+    if self.UI then self.UI:SetVisible(true) end
+    return self
+end
+
+function Window:Hide()
+    self.Config.UIEnabled = false
+    if self.UI then self.UI:SetVisible(false) end
+    if self.ConfigMenu then self.ConfigMenu:SetVisible(false) end
+    for _, popup in ipairs(self.Popups or {}) do popup:Hide() end
+    return self
+end
+
+function Window:Toggle()
+    if self:IsVisible() then return self:Hide() end
+    return self:Show()
+end
+
+function Window:CreatePopup(opts)
+    opts = opts or {}
+    local popupOptions = deepCopy(opts)
+    popupOptions.Title = popupOptions.Title or "Settings"
+    popupOptions.Columns = (type(popupOptions.Columns) == "number" and popupOptions.Columns >= 1) and popupOptions.Columns or 2
+    popupOptions.Width = (type(popupOptions.Width) == "number" and popupOptions.Width > 0) and popupOptions.Width or 520
+    popupOptions.UIKey = 0
+    popupOptions.SidePanels = false
+    popupOptions.IsPopup = true
+    popupOptions.Visible = false
+    popupOptions.BuiltInIndicatorToggle = false
+    popupOptions.StartPos = popupOptions.StartPos or self.Style.Window.StartPos
+
+    local popup = Library:CreateWindow(popupOptions)
+    popup.ParentWindow = self
+    table.insert(self.Popups, popup)
+    return popup
+end
+
 function Window:Step(statusData)
     self:_initIfNeeded()
 
@@ -1939,11 +1994,17 @@ function Window:Step(statusData)
     local m1 = ismouse1pressed()
     local m1Click = (m1 and not self.UI.Input.LastM1)
 
-    local uiKeyPressed = iskeypressed(self.Config.UIKey)
+    local uiKeyPressed = false
+    if type(self.Config.UIKey) == "number" and self.Config.UIKey > 0 then
+        uiKeyPressed = iskeypressed(self.Config.UIKey)
+    end
     if uiKeyPressed and not self.UI.Input.LastUIKey and not self.ConfigMenu.BindingMode then
         self.Config.UIEnabled = not self.Config.UIEnabled
         self.UI:SetVisible(self.Config.UIEnabled)
         self.ConfigMenu:SetVisible(self.Config.UIEnabled)
+        if not self.Config.UIEnabled then
+            for _, popup in ipairs(self.Popups or {}) do popup:Hide() end
+        end
         -- Indicator stays independent (like original)
     end
     self.UI.Input.LastUIKey = uiKeyPressed
@@ -1961,15 +2022,26 @@ function Window:Step(statusData)
         end
     end
 
-    self:_updateMainUIInteraction(mousePos, m1, m1Click)
-    self:_updateIndicatorInteraction(mousePos, m1, m1Click)
-    self:_updateConfigMenuInteraction(mousePos, m1, m1Click)
+    local popupOpen = false
+    for _, popup in ipairs(self.Popups or {}) do
+        if popup:IsVisible() then popupOpen = true; break end
+    end
+
+    if not popupOpen then
+        self:_updateMainUIInteraction(mousePos, m1, m1Click)
+        self:_updateIndicatorInteraction(mousePos, m1, m1Click)
+        self:_updateConfigMenuInteraction(mousePos, m1, m1Click)
+    end
 
     self:_renderMainUI(statusData or self.Status)
     self:_renderIndicator()
     self:_renderConfigMenu()
 
     self.UI.Input.LastM1 = m1
+
+    for _, popup in ipairs(self.Popups or {}) do
+        popup:Step()
+    end
 end
 
 function Window:Destroy()
@@ -1977,6 +2049,7 @@ function Window:Destroy()
     self.UI:_destroy()
     self.Indicator:_destroy()
     self.ConfigMenu:_destroy()
+    for _, popup in ipairs(self.Popups or {}) do popup:Destroy() end
     self._initialized = false
 end
 
@@ -1997,7 +2070,9 @@ function Library:CreateWindow(opts)
     w.Options = {
         Columns = (type(opts.Columns) == "number" and opts.Columns >= 1) and opts.Columns or 1,
         Divider = (opts.Columns == 2) and (opts.Divider ~= false) or false,
-        FixedHeight = requestedHeight
+        FixedHeight = requestedHeight,
+        SidePanels = opts.SidePanels ~= false,
+        IsPopup = opts.IsPopup == true
     }
 
     if type(opts.Title) == "string" then w.Style.Window.Title = opts.Title end
@@ -2019,12 +2094,13 @@ function Library:CreateWindow(opts)
     w.Tabs = {}
     w.ActiveTab = nil
     w.Controls = {}
+    w.Popups = {}
     w.Status = { Text = "IDLE", Color = w.Style.Colors.Status.Idle }
 
     w.Config = {
         UIKey = (type(opts.UIKey) == "number") and opts.UIKey or 0x23,   -- END
-        UIEnabled = true,
-        IndicatorEnabled = true
+        UIEnabled = opts.Visible ~= false,
+        IndicatorEnabled = opts.SidePanels ~= false
     }
 
     w.ConfigSystem = {
