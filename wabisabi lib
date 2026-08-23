@@ -457,6 +457,36 @@ function Window:_applyDefaults()
     self:_markLayoutDirty()
 end
 
+function Window:_applyControlCallbacks()
+    local failures = 0
+
+    for _, ctrl in ipairs(self.Controls) do
+        if ctrl.Callback then
+            local ok, callbackError
+
+            if ctrl.Type == "Toggle" then
+                ok, callbackError = pcall(ctrl.Callback, ctrl.Value, ctrl.Bind)
+            elseif ctrl.Type == "Slider" or ctrl.Type == "Dropdown" then
+                ok, callbackError = pcall(ctrl.Callback, ctrl.Value)
+            else
+                ok = true
+            end
+
+            if not ok then
+                failures = failures + 1
+                warn(
+                    "Wabi Sabi config callback failed for "
+                    .. tostring(ctrl.Id)
+                    .. ": "
+                    .. tostring(callbackError)
+                )
+            end
+        end
+    end
+
+    return failures
+end
+
 -- Config system
 function Window:_setConfigStatus(text, color, duration)
     self.ConfigSystem.StatusText = text or ""
@@ -545,21 +575,32 @@ function Window:LoadConfig()
         end
     end
 
+    local callbackFailures = self:_applyControlCallbacks()
+
     self.UI:SetVisible(self.Config.UIEnabled)
     self.ConfigMenu:SetVisible(self.Options.SidePanels ~= false and self.Config.UIEnabled)
     self.Indicator:SetVisible(self.Options.SidePanels ~= false and self.Config.IndicatorEnabled)
 
     self:_markLayoutDirty()
-    self:_setConfigStatus("Loaded", self.Style.Colors.Status.Active, 1.25)
+    if callbackFailures > 0 then
+        self:_setConfigStatus("Loaded with errors", self.Style.Colors.TextDim, 2)
+    else
+        self:_setConfigStatus("Loaded", self.Style.Colors.Status.Active, 1.25)
+    end
     return true
 end
 
 function Window:ResetConfig()
     self:_applyDefaults()
+    local callbackFailures = self:_applyControlCallbacks()
     self.UI:SetVisible(self.Config.UIEnabled)
     self.ConfigMenu:SetVisible(self.Config.UIEnabled)
     self.Indicator:SetVisible(self.Config.IndicatorEnabled)
-    self:_setConfigStatus("Reset", self.Style.Colors.Status.Active, 1.25)
+    if callbackFailures > 0 then
+        self:_setConfigStatus("Reset with errors", self.Style.Colors.TextDim, 2)
+    else
+        self:_setConfigStatus("Reset", self.Style.Colors.Status.Active, 1.25)
+    end
     return true
 end
 
