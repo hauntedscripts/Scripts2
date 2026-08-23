@@ -181,7 +181,11 @@ end
 
 function Window:_controlIsActive(ctrl)
     if not self:_hasTabs() then return true end
-    return ctrl.Tab == nil or ctrl.Tab == self.ActiveTab
+    -- Legacy controls created before tabs belong to the first tab instead of
+    -- leaking onto every page.
+    local tabId = ctrl.Tab
+    if tabId == nil and self.Tabs[1] then tabId = self.Tabs[1].Id end
+    return tabId == self.ActiveTab
 end
 
 function Window:SetActiveTab(id)
@@ -278,6 +282,12 @@ function Tab:AddDropdown(id, def)
 end
 
 function Window:_registerControl(ctrl)
+    -- Window:Add* calls made after tabs exist are placed on the active page.
+    -- Tab:Add* still assigns its own page explicitly.
+    if ctrl.Tab == nil and self:_hasTabs() then
+        ctrl.Tab = self.ActiveTab or self.Tabs[1].Id
+    end
+
     table.insert(self.Controls, ctrl)
 
     if ctrl.Type == "Toggle" then
