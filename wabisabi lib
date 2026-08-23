@@ -487,6 +487,43 @@ function Window:_applyControlCallbacks()
     return failures
 end
 
+local function serializeConfigControls(controls)
+    local savedControls = {}
+
+    for _, ctrl in ipairs(controls or {}) do
+        if ctrl.Type == "Toggle" then
+            savedControls[ctrl.Id] = { Type="Toggle", Value=(ctrl.Value == true), Bind=ctrl.Bind or 0 }
+        elseif ctrl.Type == "Slider" then
+            savedControls[ctrl.Id] = { Type="Slider", Value=ctrl.Value }
+        elseif ctrl.Type == "Dropdown" then
+            savedControls[ctrl.Id] = { Type="Dropdown", Value=ctrl.Value }
+        end
+    end
+
+    return savedControls
+end
+
+local function restoreConfigControls(controls, savedControls)
+    if type(savedControls) ~= "table" then return end
+
+    for _, ctrl in ipairs(controls or {}) do
+        local saved = savedControls[ctrl.Id]
+        if type(saved) == "table" then
+            if ctrl.Type == "Toggle" and saved.Type == "Toggle" then
+                if type(saved.Value) == "boolean" then ctrl.Value = saved.Value end
+                if type(saved.Bind) == "number" then ctrl.Bind = (saved.Bind ~= 0) and saved.Bind or nil end
+            elseif ctrl.Type == "Slider" and saved.Type == "Slider" then
+                if type(saved.Value) == "number" then
+                    ctrl.Value = Math.Clamp(saved.Value, ctrl.Min, ctrl.Max)
+                    ctrl.Value = Math.RoundStep(ctrl.Value, ctrl.Step)
+                end
+            elseif ctrl.Type == "Dropdown" and saved.Type == "Dropdown" then
+                if type(saved.Value) == "string" then ctrl.Value = saved.Value end
+            end
+        end
+    end
+end
+
 -- Config system
 function Window:_setConfigStatus(text, color, duration)
     self.ConfigSystem.StatusText = text or ""
@@ -505,17 +542,15 @@ function Window:SaveConfig()
         UIEnabled = self.Config.UIEnabled,
         IndicatorEnabled = self.Config.IndicatorEnabled,
 
-        Controls = {}
+        Controls = serializeConfigControls(self.Controls),
+        Popups = {}
     }
 
-    for _, ctrl in ipairs(self.Controls) do
-        if ctrl.Type == "Toggle" then
-            data.Controls[ctrl.Id] = { Type="Toggle", Value = (ctrl.Value == true), Bind = ctrl.Bind or 0 }
-        elseif ctrl.Type == "Slider" then
-            data.Controls[ctrl.Id] = { Type="Slider", Value = ctrl.Value }
-        elseif ctrl.Type == "Dropdown" then
-            data.Controls[ctrl.Id] = { Type="Dropdown", Value = ctrl.Value }
-        end
+    for popupIndex, popup in ipairs(self.Popups or {}) do
+        local popupKey = tostring(popup.PopupId or popupIndex)
+        data.Popups[popupKey] = {
+            Controls = serializeConfigControls(popup.Controls)
+        }
     end
 
     local ok, encoded = pcall(function() return HttpService:JSONEncode(data) end)
@@ -556,26 +591,22 @@ function Window:LoadConfig()
     if type(decoded.UIEnabled) == "boolean" then self.Config.UIEnabled = decoded.UIEnabled end
     if type(decoded.IndicatorEnabled) == "boolean" then self.Config.IndicatorEnabled = decoded.IndicatorEnabled end
 
-    if type(decoded.Controls) == "table" then
-        for _, ctrl in ipairs(self.Controls) do
-            local saved = decoded.Controls[ctrl.Id]
-            if type(saved) == "table" then
-                if ctrl.Type == "Toggle" and saved.Type == "Toggle" then
-                    if type(saved.Value) == "boolean" then ctrl.Value = saved.Value end
-                    if type(saved.Bind) == "number" then ctrl.Bind = (saved.Bind ~= 0) and saved.Bind or nil end
-                elseif ctrl.Type == "Slider" and saved.Type == "Slider" then
-                    if type(saved.Value) == "number" then
-                        ctrl.Value = Math.Clamp(saved.Value, ctrl.Min, ctrl.Max)
-                        ctrl.Value = Math.RoundStep(ctrl.Value, ctrl.Step)
-                    end
-                elseif ctrl.Type == "Dropdown" and saved.Type == "Dropdown" then
-                    if type(saved.Value) == "string" then ctrl.Value = saved.Value end
-                end
+    restoreConfigControls(self.Controls, decoded.Controls)
+
+    local callbackFailures = self:_applyControlCallbacks()
+
+    if type(decoded.Popups) == "table" then
+        for popupIndex, popup in ipairs(self.Popups or {}) do
+            local popupKey = tostring(popup.PopupId or popupIndex)
+            local savedPopup = decoded.Popups[popupKey]
+
+            if type(savedPopup) == "table" then
+                restoreConfigControls(popup.Controls, savedPopup.Controls)
+                callbackFailures = callbackFailures + popup:_applyControlCallbacks()
+                popup:_markLayoutDirty()
             end
         end
     end
-
-    local callbackFailures = self:_applyControlCallbacks()
 
     self.UI:SetVisible(self.Config.UIEnabled)
     self.ConfigMenu:SetVisible(self.Options.SidePanels ~= false and self.Config.UIEnabled)
@@ -593,6 +624,12 @@ end
 function Window:ResetConfig()
     self:_applyDefaults()
     local callbackFailures = self:_applyControlCallbacks()
+
+    for _, popup in ipairs(self.Popups or {}) do
+        popup:_applyDefaults()
+        callbackFailures = callbackFailures + popup:_applyControlCallbacks()
+    end
+
     self.UI:SetVisible(self.Config.UIEnabled)
     self.ConfigMenu:SetVisible(self.Config.UIEnabled)
     self.Indicator:SetVisible(self.Config.IndicatorEnabled)
@@ -2068,6 +2105,7 @@ function Window:CreatePopup(opts)
 
     local popup = Library:CreateWindow(popupOptions)
     popup.ParentWindow = self
+    popup.PopupId = opts.Id or popupOptions.Title or tostring(#self.Popups + 1)
     table.insert(self.Popups, popup)
     return popup
 end
