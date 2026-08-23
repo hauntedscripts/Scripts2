@@ -915,7 +915,47 @@ function Window:_computeWindowSizeAndLayout()
     end
 
     local contentHeight = colMaxY - (self.UI.Position.Y + contentTopY)
-    local height = contentTopY + contentHeight + LAYOUT.FooterHeight
+
+    -- Keep every tab the same height by reserving enough space for the
+    -- tallest page, even while a shorter page is active.
+    if self:_hasTabs() then
+        local firstTabId = self.Tabs[1] and self.Tabs[1].Id or nil
+
+        for _, tab in ipairs(self.Tabs) do
+            local pageY = {}
+            for i = 1, columns do pageY[i] = 0 end
+
+            for _, ctrl in ipairs(self.Controls) do
+                local ctrlTab = ctrl.Tab or firstTabId
+                if ctrlTab == tab.Id then
+                    local col = 1
+                    if type(ctrl.Column) == "number" and ctrl.Column >= 1 and ctrl.Column <= columns then
+                        col = ctrl.Column
+                    end
+
+                    if ctrl.Type == "Section" then
+                        pageY[col] = pageY[col] + LAYOUT.SectionHeight + 6
+                    elseif ctrl.Type == "Slider" then
+                        pageY[col] = pageY[col] + LAYOUT.SliderHeight
+                    elseif ctrl.Type == "Toggle" or ctrl.Type == "Button" or ctrl.Type == "Dropdown" then
+                        pageY[col] = pageY[col] + LAYOUT.RowHeight
+                        if ctrl.Type == "Dropdown" and ctrl.Open then
+                            local visibleCount = math.min(ctrl.MaxVisible, #ctrl.Options)
+                            pageY[col] = pageY[col] + (visibleCount * LAYOUT.ItemHeight) + 6
+                        end
+                    end
+                end
+            end
+
+            for i = 1, columns do
+                if pageY[i] > contentHeight then contentHeight = pageY[i] end
+            end
+        end
+    end
+
+    local autoHeight = contentTopY + contentHeight + LAYOUT.FooterHeight
+    local height = self.Options.FixedHeight or autoHeight
+    height = math.max(height, contentTopY + LAYOUT.FooterHeight)
     self.UI.Size = Vector2.new(width, height)
 
     self._layout = {
@@ -1821,6 +1861,20 @@ function Window:SetStatus(text, color)
     self.Status.Color = color or self.Style.Colors.Status.Idle
 end
 
+function Window:SetHeight(height)
+    if type(height) ~= "number" or height <= 0 then return false end
+    self.Options.FixedHeight = height
+    self.Style.Window.Size = Vector2.new(self.Style.Window.Size.X, height)
+    self:_markLayoutDirty()
+    return true
+end
+
+function Window:UseAutomaticHeight()
+    self.Options.FixedHeight = nil
+    self:_markLayoutDirty()
+    return true
+end
+
 
 function Window:Get(id)
     for _, ctrl in ipairs(self.Controls) do
@@ -1931,11 +1985,15 @@ function Library:CreateWindow(opts)
 
     w.Options = {
         Columns = (type(opts.Columns) == "number" and opts.Columns >= 1) and opts.Columns or 1,
-        Divider = (opts.Columns == 2) and (opts.Divider ~= false) or false
+        Divider = (opts.Columns == 2) and (opts.Divider ~= false) or false,
+        FixedHeight = (type(opts.Height) == "number" and opts.Height > 0) and opts.Height or nil
     }
 
     if type(opts.Title) == "string" then w.Style.Window.Title = opts.Title end
     if type(opts.Width) == "number" then w.Style.Window.Size = Vector2.new(opts.Width, w.Style.Window.Size.Y) end
+    if w.Options.FixedHeight then
+        w.Style.Window.Size = Vector2.new(w.Style.Window.Size.X, w.Options.FixedHeight)
+    end
     if type(opts.Theme) == "table" then
         -- Shallow merge user theme into the default theme (safe: only overwrite provided fields)
         for k, v in pairs(opts.Theme) do
