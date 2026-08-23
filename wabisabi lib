@@ -1445,7 +1445,7 @@ function Window:_renderMainUI(statusData)
                 pack.Bg.Visible = true
 
                 pack.Text.Text = tab.Name
-                pack.Text.Position = Vector2.new(x + (w / 2), tabY + 10)
+                pack.Text.Position = Vector2.new(x + (w / 2), tabY + 8)
                 pack.Text.Color = active and C.TextMain or C.TextDim
                 pack.Text.Visible = true
 
