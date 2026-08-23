@@ -68,10 +68,16 @@ local function GetKeyName(code)
 end
 
 -- Drawing helpers
+local activeDrawingZOffset = 0
+
 local function createDrawing(drawType, properties)
     local obj = Drawing.new(drawType)
     for k, v in pairs(properties) do
-        obj[k] = v
+        if k == "ZIndex" and type(v) == "number" then
+            obj[k] = v + activeDrawingZOffset
+        else
+            obj[k] = v
+        end
     end
     return obj
 end
@@ -374,6 +380,7 @@ function Window:AddSlider(id, def)
         Max = def.Max or 100,
         Step = def.Step or 1,
         Integer = (def.Integer == true),
+        Color = (typeof(def.Color) == "Color3") and def.Color or nil,
 
         Default = (def.Default ~= nil and def.Default or (def.Min or 0)),
         Value = (def.Default ~= nil and def.Default or (def.Min or 0)),
@@ -681,7 +688,7 @@ function Window:_buildPanels()
                 -- We position it manually to align with the label baseline instead.
                 pack.Value = createDrawing("Text", { Text = tostring(ctrl.Value), Color = C.TextMain, Size = 13, Outline = true, ZIndex = 4 })
                 pack.BarBg = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(30, 30, 30), ZIndex = 4 })
-                pack.BarFill = createDrawing("Square", { Filled = true, Color = C.Accent, ZIndex = 5 })
+                pack.BarFill = createDrawing("Square", { Filled = true, Color = ctrl.Color or C.Accent, ZIndex = 5 })
 
             elseif ctrl.Type == "Toggle" then
                 pack.Label = createDrawing("Text", { Text = ctrl.Text, Color = C.TextDim, Size = 13, Outline = true, ZIndex = 4 })
@@ -1018,20 +1025,13 @@ function Window:_initIfNeeded()
 
     self:_computeWindowSizeAndLayout()
 
+    activeDrawingZOffset = self.Options.ZIndexOffset or 0
     self.UI:InitFrame()
     self.UI:BuildTabs()
     self.UI:BuildControls()
     self.Indicator:Init()
     self.ConfigMenu:Init()
-
-    local zOffset = self.Options.ZIndexOffset or 0
-    if zOffset ~= 0 then
-        addZIndexDeep(self.UI.Elements, zOffset)
-        addZIndexDeep(self.UI.TabsDraw, zOffset)
-        addZIndexDeep(self.UI.ControlsDraw, zOffset)
-        addZIndexDeep(self.Indicator.Elements, zOffset)
-        addZIndexDeep(self.ConfigMenu.Elements, zOffset)
-    end
+    activeDrawingZOffset = 0
 
     self.UI:SetVisible(self.Config.UIEnabled)
     self.ConfigMenu:SetVisible(self.Options.SidePanels ~= false and self.Config.UIEnabled)
@@ -1543,6 +1543,7 @@ function Window:_renderMainUI(statusData)
                 pack.BarBg.Visible = true
 
                 local percent = (ctrl.Value - ctrl.Min) / (ctrl.Max - ctrl.Min)
+                pack.BarFill.Color = ctrl.Color or C.Accent
                 pack.BarFill.Position = Vector2.new(xPos, yPos + 18)
                 pack.BarFill.Size = Vector2.new(width * percent, 6)
                 pack.BarFill.Visible = true
@@ -1957,6 +1958,25 @@ function Window:SetBind(id, keycode)
     return false
 end
 
+function Window:SetSliderColor(id, color)
+    if color ~= nil and typeof(color) ~= "Color3" then return false end
+
+    for _, ctrl in ipairs(self.Controls) do
+        if ctrl.Id == id and ctrl.Type == "Slider" then
+            ctrl.Color = color
+
+            local pack = self.UI and self.UI.ControlsDraw and self.UI.ControlsDraw[ctrl.Id]
+            if pack and pack.BarFill then
+                pack.BarFill.Color = color or self.Style.Colors.Accent
+            end
+
+            return true
+        end
+    end
+
+    return false
+end
+
 function Window:IsVisible()
     return self.Config.UIEnabled == true
 end
@@ -2000,7 +2020,7 @@ function Window:CreatePopup(opts)
     popupOptions.UIKey = 0
     popupOptions.SidePanels = false
     popupOptions.IsPopup = true
-    popupOptions.ZIndexOffset = 100
+    popupOptions.ZIndexOffset = 1000
     popupOptions.Visible = false
     popupOptions.BuiltInIndicatorToggle = false
     popupOptions.StartPos = popupOptions.StartPos or self.Style.Window.StartPos
