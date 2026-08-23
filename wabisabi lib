@@ -143,12 +143,17 @@ local function returnSelf(self) return self end
 local Window = {}
 Window.__index = Window
 
+local Tab = {}
+Tab.__index = Tab
+
 -- Layout constants
 local LAYOUT = {
     SegHeight = 2,
     HeaderHeight = 20,
     TopDividerY = 22,
     ContentTopY = 30,
+    TabBarHeight = 22,
+    TabHeight = 18,
     FooterHeight = 20,
     PaddingX = 10,
     ColumnGap = 20,
@@ -161,6 +166,115 @@ local LAYOUT = {
 -- Control registration
 function Window:_markLayoutDirty()
     self._layoutDirty = true
+end
+
+function Window:_hasTabs()
+    return self.Tabs ~= nil and #self.Tabs > 0
+end
+
+function Window:_contentTopY()
+    if self:_hasTabs() then
+        return LAYOUT.ContentTopY + LAYOUT.TabBarHeight
+    end
+    return LAYOUT.ContentTopY
+end
+
+function Window:_controlIsActive(ctrl)
+    if not self:_hasTabs() then return true end
+    return ctrl.Tab == nil or ctrl.Tab == self.ActiveTab
+end
+
+function Window:SetActiveTab(id)
+    if not self:_hasTabs() then return false end
+
+    for _, tab in ipairs(self.Tabs) do
+        if tab.Id == id or tab.Name == id then
+            if self.ActiveTab ~= tab.Id then
+                self.ActiveTab = tab.Id
+
+                for _, ctrl in ipairs(self.Controls) do
+                    if ctrl.Type == "Dropdown" then ctrl.Open = false end
+                end
+
+                if self.UI then
+                    self.UI.BindingMode = false
+                    self.UI.BindingTarget = nil
+                    self.UI.SliderState.Active = nil
+                    self.UI.ScrollbarState.Active = nil
+                end
+
+                self:_markLayoutDirty()
+            end
+            return true
+        end
+    end
+
+    return false
+end
+
+local function withTab(def, tabId)
+    local out = {}
+    for k, v in pairs(def or {}) do out[k] = v end
+    out.Tab = tabId
+    return out
+end
+
+function Window:AddTab(name, opts)
+    opts = opts or {}
+    local id = opts.Id or name or ("Tab " .. tostring(#self.Tabs + 1))
+    local label = name or tostring(id)
+
+    for _, existing in ipairs(self.Tabs) do
+        if existing.Id == id then return existing end
+    end
+
+    local tab = setmetatable({
+        Window = self,
+        Id = id,
+        Name = label,
+        _rect = nil
+    }, Tab)
+
+    table.insert(self.Tabs, tab)
+    if self.ActiveTab == nil then self.ActiveTab = tab.Id end
+
+    self:_markLayoutDirty()
+    if self._initialized then self._needsRebuild = true end
+    return tab
+end
+
+function Window:CreateTab(name, opts)
+    return self:AddTab(name, opts)
+end
+
+function Tab:SetActive()
+    self.Window:SetActiveTab(self.Id)
+    return self
+end
+
+function Tab:AddSection(text, opts)
+    self.Window:AddSection(text, withTab(opts, self.Id))
+    return self
+end
+
+function Tab:AddToggle(id, def)
+    self.Window:AddToggle(id, withTab(def, self.Id))
+    return self
+end
+
+function Tab:AddSlider(id, def)
+    self.Window:AddSlider(id, withTab(def, self.Id))
+    return self
+end
+
+function Tab:AddButton(id, def)
+    self.Window:AddButton(id, withTab(def, self.Id))
+    return self
+end
+
+function Tab:AddDropdown(id, def)
+    self.Window:AddDropdown(id, withTab(def, self.Id))
+    return self
 end
 
 function Window:_registerControl(ctrl)
@@ -189,6 +303,7 @@ function Window:AddSection(text, opts)
         Id = "__section_" .. tostring(#self.Controls + 1),
         Text = text or "",
         Column = opts.Column,
+        Tab = opts.Tab,
     }
     self:_registerControl(ctrl)
     return self
@@ -202,6 +317,7 @@ function Window:AddToggle(id, def)
         Text = def.Text or id,
         Description = def.Description or "",
         Column = def.Column,
+        Tab = def.Tab,
 
         Default = (def.Default == true),
         Value = (def.Default == true),
@@ -226,6 +342,7 @@ function Window:AddSlider(id, def)
         Text = def.Text or id,
         Description = def.Description or "",
         Column = def.Column,
+        Tab = def.Tab,
 
         Min = def.Min or 0,
         Max = def.Max or 100,
@@ -249,6 +366,7 @@ function Window:AddButton(id, def)
         Text = def.Text or id,
         Description = def.Description or "",
         Column = def.Column,
+        Tab = def.Tab,
 
         Callback = def.Callback
     }
@@ -268,6 +386,7 @@ function Window:AddDropdown(id, def)
         Text = def.Text or id,
         Description = def.Description or "",
         Column = def.Column,
+        Tab = def.Tab,
 
         Options = options,
         MaxVisible = def.MaxVisible or 6,
@@ -437,6 +556,7 @@ function Window:_buildPanels()
         BindingDebounce = false,
 
         Elements = {},
+        TabsDraw = {},
         ControlsDraw = {},
     }
 
@@ -444,6 +564,9 @@ function Window:_buildPanels()
         UI.Visible = visible
         for _, obj in pairs(UI.Elements) do
             setVisibleDeep(obj, visible)
+        end
+        for _, pack in pairs(UI.TabsDraw) do
+            setVisibleDeep(pack, visible)
         end
         for _, pack in pairs(UI.ControlsDraw) do
             setVisibleDeep(pack, visible)
@@ -466,8 +589,10 @@ function Window:_buildPanels()
 
     function UI:_destroy()
         safeRemove(UI.Elements)
+        safeRemove(UI.TabsDraw)
         safeRemove(UI.ControlsDraw)
         UI.Elements = {}
+        UI.TabsDraw = {}
         UI.ControlsDraw = {}
     end
 
@@ -479,6 +604,7 @@ function Window:_buildPanels()
         E.HeaderBg = createDrawing("Square", { Filled = true, Color = C.Header, ZIndex = 2 })
         E.Border = createDrawing("Square", { Filled = false, Thickness = 1, Color = C.Border, ZIndex = 3 })
         E.Divider = createDrawing("Square", { Filled = true, Color = C.Border, ZIndex = 3 })
+        E.TabDivider = createDrawing("Square", { Filled = true, Color = C.Border, ZIndex = 3 })
 
         E.VerticalLine = createDrawing("Line", { Thickness = 1, Color = C.Border, ZIndex = 3 })
 
@@ -489,6 +615,20 @@ function Window:_buildPanels()
         E.Segments = {}
         for i = 1, 100 do
             table.insert(E.Segments, createDrawing("Square", { Filled = true, ZIndex = 3, Size = Vector2.new(2, 2) }))
+        end
+    end
+
+    function UI:BuildTabs()
+        safeRemove(UI.TabsDraw)
+        UI.TabsDraw = {}
+
+        local C = selfWindow.Style.Colors
+        for _, tab in ipairs(selfWindow.Tabs) do
+            UI.TabsDraw[tab.Id] = {
+                Bg = createDrawing("Square", { Filled = true, Color = C.Header, ZIndex = 3 }),
+                Text = createDrawing("Text", { Text = tab.Name, Color = C.TextDim, Size = 13, Outline = true, ZIndex = 4, Center = true }),
+                Accent = createDrawing("Square", { Filled = true, Color = C.Accent, ZIndex = 5 })
+            }
         end
     end
 
@@ -712,7 +852,8 @@ function Window:_computeWindowSizeAndLayout()
         colX[i] = self.UI.Position.X + LAYOUT.PaddingX + (i - 1) * (colW + LAYOUT.ColumnGap)
     end
 
-    local yStart = self.UI.Position.Y + LAYOUT.ContentTopY
+    local contentTopY = self:_contentTopY()
+    local yStart = self.UI.Position.Y + contentTopY
     local colY = {}
     for i = 1, columns do
         colY[i] = yStart
@@ -721,6 +862,10 @@ function Window:_computeWindowSizeAndLayout()
 
     -- Compute per-control rects
     for _, ctrl in ipairs(self.Controls) do
+        ctrl._rect = nil
+        ctrl._extra = 0
+
+        if self:_controlIsActive(ctrl) then
         local col = 1
         if type(ctrl.Column) == "number" and ctrl.Column >= 1 and ctrl.Column <= columns then
             col = ctrl.Column
@@ -756,10 +901,11 @@ function Window:_computeWindowSizeAndLayout()
         end
 
         if colY[col] > colMaxY then colMaxY = colY[col] end
+        end
     end
 
-    local contentHeight = colMaxY - (self.UI.Position.Y + LAYOUT.ContentTopY)
-    local height = LAYOUT.ContentTopY + contentHeight + LAYOUT.FooterHeight
+    local contentHeight = colMaxY - (self.UI.Position.Y + contentTopY)
+    local height = contentTopY + contentHeight + LAYOUT.FooterHeight
     self.UI.Size = Vector2.new(width, height)
 
     self._layout = {
@@ -807,6 +953,7 @@ function Window:_initIfNeeded()
     self:_computeWindowSizeAndLayout()
 
     self.UI:InitFrame()
+    self.UI:BuildTabs()
     self.UI:BuildControls()
     self.Indicator:Init()
     self.ConfigMenu:Init()
@@ -892,6 +1039,17 @@ function Window:_updateMainUIInteraction(mousePos, m1, m1Click)
             UI.BindingDebounce = false
         end
         return
+    end
+
+    -- Tabs sit directly below the draggable title bar and capture clicks first.
+    if m1Click and self:_hasTabs() then
+        for _, tab in ipairs(self.Tabs) do
+            local r = tab._rect
+            if r and isInRect(mousePos, r.x, r.y, r.w, r.h) then
+                self:SetActiveTab(tab.Id)
+                return
+            end
+        end
     end
 
     UI.SliderState.Hovered = nil
@@ -1215,9 +1373,49 @@ function Window:_renderMainUI(statusData)
     E.StatusValue.Position = Vector2.new(pos.X + size.X - 40, pos.Y + 10)
     E.StatusValue.Visible = true
 
+    if self:_hasTabs() then
+        local tabCount = #self.Tabs
+        local tabX = pos.X + LAYOUT.PaddingX
+        local tabY = pos.Y + LAYOUT.TopDividerY + 2
+        local availableW = size.X - (LAYOUT.PaddingX * 2)
+        local tabW = math.max(1, math.floor(availableW / tabCount))
+
+        for index, tab in ipairs(self.Tabs) do
+            local pack = UI.TabsDraw[tab.Id]
+            local x = tabX + ((index - 1) * tabW)
+            local w = (index == tabCount) and (availableW - ((index - 1) * tabW)) or tabW
+            tab._rect = { x = x, y = tabY, w = w, h = LAYOUT.TabHeight }
+
+            if pack then
+                local active = (tab.Id == self.ActiveTab)
+                pack.Bg.Position = Vector2.new(x, tabY)
+                pack.Bg.Size = Vector2.new(w, LAYOUT.TabHeight)
+                pack.Bg.Color = active and Color3.fromRGB(28, 28, 28) or C.Header
+                pack.Bg.Visible = true
+
+                pack.Text.Text = tab.Name
+                pack.Text.Position = Vector2.new(x + (w / 2), tabY + 5)
+                pack.Text.Color = active and C.TextMain or C.TextDim
+                pack.Text.Visible = true
+
+                pack.Accent.Position = Vector2.new(x, tabY + LAYOUT.TabHeight - 2)
+                pack.Accent.Size = Vector2.new(w, 2)
+                pack.Accent.Visible = active
+            end
+        end
+
+        E.TabDivider.Position = Vector2.new(pos.X, pos.Y + LAYOUT.TopDividerY + LAYOUT.TabBarHeight)
+        E.TabDivider.Size = Vector2.new(size.X, 1)
+        E.TabDivider.Visible = true
+    else
+        E.TabDivider.Visible = false
+        for _, tab in ipairs(self.Tabs or {}) do tab._rect = nil end
+        for _, pack in pairs(UI.TabsDraw) do setVisibleDeep(pack, false) end
+    end
+
     if self._layout.columns == 2 and self._layout.divider then
         local x = pos.X + math.floor(size.X / 2)
-        E.VerticalLine.From = Vector2.new(x, pos.Y + LAYOUT.ContentTopY)
+        E.VerticalLine.From = Vector2.new(x, pos.Y + self:_contentTopY())
         E.VerticalLine.To = Vector2.new(x, pos.Y + size.Y - LAYOUT.FooterHeight)
         E.VerticalLine.Visible = true
     else
@@ -1238,7 +1436,9 @@ function Window:_renderMainUI(statusData)
     for _, ctrl in ipairs(self.Controls) do
         local pack = UI.ControlsDraw[ctrl.Id]
         local r = ctrl._rect
-        if pack and r then
+        if not self:_controlIsActive(ctrl) then
+            setVisibleDeep(pack, false)
+        elseif pack and r then
             if ctrl.Type == "Section" then
                 pack.Text.Position = Vector2.new(r.x, r.y)
                 pack.Text.Visible = true
@@ -1737,6 +1937,8 @@ function Library:CreateWindow(opts)
         end
     end
 
+    w.Tabs = {}
+    w.ActiveTab = nil
     w.Controls = {}
     w.Status = { Text = "IDLE", Color = w.Style.Colors.Status.Idle }
 
