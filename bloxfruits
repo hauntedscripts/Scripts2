@@ -1,0 +1,197 @@
+-- Standalone Matcha Drawing overlay -- no external UI library
+
+local function d(s)
+    local t = {}
+    for i = 1, #s, 2 do
+        local c = tonumber(s:sub(i, i+1), 16)
+        t[#t+1] = string.char(c)
+    end
+    return table.concat(t)
+end
+
+local a = d("68747470733a2f2f646973636f72642e67672f6e4556754d435a6d7152")
+local b = 4
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    repeat
+        wait(0.1)
+        LocalPlayer = Players.LocalPlayer
+    until LocalPlayer
+end
+
+local Mouse = nil
+pcall(function() Mouse = LocalPlayer:GetMouse() end)
+
+local viewportX, viewportY = 1280, 720
+pcall(function()
+    local viewport = game.Workspace.CurrentCamera.ViewportSize
+    if viewport and viewport.X and viewport.Y then
+        viewportX = viewport.X
+        viewportY = viewport.Y
+    end
+end)
+
+local centerX = math.floor(viewportX / 2)
+local centerY = math.floor(viewportY / 2)
+local drawings = {}
+
+local function keep(object)
+    table.insert(drawings, object)
+    return object
+end
+
+local function makeSquare(x, y, width, height, color, transparency, zIndex)
+    local square = keep(Drawing.new("Square"))
+    square.Position = Vector2.new(x, y)
+    square.Size = Vector2.new(width, height)
+    square.Color = color
+    square.Transparency = transparency
+    square.Filled = true
+    square.ZIndex = zIndex
+    square.Visible = true
+    return square
+end
+
+local function makeText(text, x, y, size, color, zIndex)
+    local label = keep(Drawing.new("Text"))
+    label.Text = text
+    label.Position = Vector2.new(x, y)
+    label.Size = size
+    label.Color = color
+    label.Transparency = 1
+    label.Center = true
+    label.Outline = true
+    label.Font = Drawing.Fonts.SystemBold
+    label.ZIndex = zIndex
+    label.Visible = true
+    return label
+end
+
+local overlay = makeSquare(0, 0, viewportX, viewportY, Color3.fromRGB(5, 6, 9), 0.94, 100)
+local panelWidth, panelHeight = 520, 260
+local panelX = centerX - math.floor(panelWidth / 2)
+local panelY = centerY - math.floor(panelHeight / 2)
+local panel = makeSquare(panelX, panelY, panelWidth, panelHeight, Color3.fromRGB(18, 20, 27), 1, 101)
+local accent = makeSquare(panelX, panelY, panelWidth, 5, Color3.fromRGB(0, 200, 105), 1, 102)
+
+local loadingText = makeText(d("4c6f6164696e672e2e2e"), centerX, centerY + 74, 22, Color3.fromRGB(240, 240, 245), 110)
+
+local spinnerDots = {}
+local dotCount = 12
+local spinnerRadius = 43
+for i = 1, dotCount do
+    local angle = ((i - 1) / dotCount) * math.pi * 2
+    local dot = keep(Drawing.new("Circle"))
+    dot.Position = Vector2.new(
+        centerX + math.cos(angle) * spinnerRadius,
+        centerY - 20 + math.sin(angle) * spinnerRadius
+    )
+    dot.Radius = 6
+    dot.NumSides = 20
+    dot.Thickness = 1
+    dot.Filled = true
+    dot.Color = Color3.fromRGB(0, 200, 105)
+    dot.Transparency = 1
+    dot.ZIndex = 109
+    dot.Visible = true
+    table.insert(spinnerDots, dot)
+end
+
+notify(d("4c6f6164696e672e2e2e"), d("6c616365642e6c6f6c"), b)
+
+local startedAt = os.clock()
+while true do
+    local elapsed = os.clock() - startedAt
+    local activeDot = math.floor(elapsed * 12) % dotCount
+
+    for i, dot in ipairs(spinnerDots) do
+        local distance = (i - 1 - activeDot) % dotCount
+        local brightness = math.max(45, 230 - distance * 16)
+        dot.Color = Color3.fromRGB(0, brightness, math.floor(brightness * 0.55))
+    end
+
+    if elapsed >= b then break end
+    task.wait()
+end
+
+for _, dot in ipairs(spinnerDots) do
+    dot.Visible = false
+end
+loadingText.Visible = false
+
+local messageText = makeText(
+    d("6275642c206a6f696e2074686520646973636f72642073657276657220666f722074686520736372697074"),
+    centerX,
+    centerY - 58,
+    24,
+    Color3.fromRGB(245, 245, 248),
+    110
+)
+
+local linkText = makeText(
+    a,
+    centerX,
+    centerY - 15,
+    17,
+    Color3.fromRGB(145, 155, 170),
+    110
+)
+
+local buttonWidth, buttonHeight = 300, 48
+local buttonX = centerX - math.floor(buttonWidth / 2)
+local buttonY = centerY + 28
+local copyButton = makeSquare(
+    buttonX,
+    buttonY,
+    buttonWidth,
+    buttonHeight,
+    Color3.fromRGB(0, 180, 95),
+    1,
+    108
+)
+local buttonTextSize = 19
+local buttonTextY = buttonY + ((buttonHeight - buttonTextSize) / 2) + 8
+local buttonText = makeText(
+    d("436f707920446973636f7264204c696e6b"),
+    centerX,
+    buttonTextY,
+    buttonTextSize,
+    Color3.fromRGB(255, 255, 255),
+    110
+)
+
+notify(d("6275642c206a6f696e2074686520646973636f72642073657276657220666f7220746865207363726970740a") .. a, d("6c616365642e6c6f6c"), 8)
+
+local wasPressed = false
+while true do
+    local mouseX, mouseY = -1, -1
+    if Mouse then
+        local okMouse, x, y = pcall(function() return Mouse.X, Mouse.Y end)
+        if okMouse and type(x) == "number" and type(y) == "number" then
+            mouseX, mouseY = x, y
+        end
+    end
+
+    local hovering = mouseX >= buttonX and mouseX <= buttonX + buttonWidth
+        and mouseY >= buttonY and mouseY <= buttonY + buttonHeight
+
+    copyButton.Color = hovering and Color3.fromRGB(0, 215, 115) or Color3.fromRGB(0, 180, 95)
+
+    local pressed = false
+    local okPressed, pressedValue = pcall(function() return ismouse1pressed() end)
+    if okPressed and pressedValue == true then pressed = true end
+
+    if hovering and pressed and not wasPressed then
+        local copied = pcall(function() setclipboard(a) end)
+        if copied then
+            notify(d("446973636f7264206c696e6b20636f7069656421"), d("6c616365642e6c6f6c"), 3)
+        else
+            notify(a, d("436f7079207468697320446973636f7264206c696e6b"), 8)
+        end
+    end
+
+    wasPressed = pressed
+    task.wait()
+end
