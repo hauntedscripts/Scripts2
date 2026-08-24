@@ -132,7 +132,9 @@ end)
 local Library = WabiSabiUILibrary
 if not Library then
     local uiUrls = {
-        "https://raw.githubusercontent.com/myth4c/Scripts2/refs/heads/main/wabisabi%20lib",
+        "https://raw.githubusercontent.com/myth4c/Scripts/main/wabisabi%20lib",
+        "https://raw.githubusercontent.com/myth4c/Scripts/refs/heads/main/wabisabi%20lib",
+        "https://cdn.jsdelivr.net/gh/myth4c/Scripts@main/wabisabi%20lib",
     }
     local lastError = "no valid UI response"
 
@@ -764,6 +766,15 @@ task.spawn(function()
                     local reached = false
                     local lastAttack = 0
                     while S.autoFarmNearest and S.remoteMode == useRemote and not farmPriorityBlocked() and isAlive(enemy) do
+                        if not useRemote then
+                            local head = enemy:FindFirstChild("Head")
+                            if head then
+                                pcall(function()
+                                    head.Size = Vector3.new(50, 50, 50)
+                                    head.CanCollide = false
+                                end)
+                            end
+                        end
                         local root = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildOfClass("BasePart")
                         local position = safePosition(root)
                         if not position then break end
