@@ -132,9 +132,7 @@ end)
 local Library = WabiSabiUILibrary
 if not Library then
     local uiUrls = {
-        "https://raw.githubusercontent.com/myth4c/Scripts/main/wabisabi%20lib",
-        "https://raw.githubusercontent.com/myth4c/Scripts/refs/heads/main/wabisabi%20lib",
-        "https://cdn.jsdelivr.net/gh/myth4c/Scripts@main/wabisabi%20lib",
+        "https://raw.githubusercontent.com/myth4c/Scripts2/refs/heads/main/wabisabi%20lib",
     }
     local lastError = "no valid UI response"
 
