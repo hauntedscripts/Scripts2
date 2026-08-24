@@ -463,6 +463,20 @@ local function getHeldTool()
     return nil
 end
 
+local function getFarmOffsets()
+    local hasSanguine = false
+    local char = LocalPlayer and LocalPlayer.Character or nil
+    local backpack = LocalPlayer and LocalPlayer:FindFirstChild("Backpack") or nil
+
+    local okSanguine = pcall(function()
+        hasSanguine = (backpack and backpack:FindFirstChild("Sanguine Art") ~= nil)
+            or (char and char:FindFirstChild("Sanguine Art") ~= nil)
+    end)
+    if not okSanguine then hasSanguine = false end
+
+    return hasSanguine and 15 or 0, 23, 0
+end
+
 local function pressWeaponSlot(slot)
     local key = slot == 3 and 0x33 or 0x31
     pcall(function()
@@ -776,7 +790,12 @@ task.spawn(function()
                         local root = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildOfClass("BasePart")
                         local position = safePosition(root)
                         if not position then break end
-                        local target = Vector3.new(position.X, position.Y + 23, position.Z)
+                        local offsetX, offsetY, offsetZ = getFarmOffsets()
+                        local target = Vector3.new(
+                            position.X + offsetX,
+                            position.Y + offsetY,
+                            position.Z + offsetZ
+                        )
                         if not reached then
                             tweenTo(hrp, target, function()
                                 return S.autoFarmNearest and S.remoteMode == useRemote and not farmPriorityBlocked() and isAlive(enemy)
