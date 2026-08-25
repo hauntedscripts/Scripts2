@@ -183,6 +183,7 @@ local LAYOUT = {
     SliderHeight = 40,
     SectionHeight = 18,
     ItemHeight = 16,
+    PriorityButtonHeight = 20,
 }
 
 -- Control registration
@@ -303,6 +304,75 @@ function Tab:AddDropdown(id, def)
     return self
 end
 
+function Tab:AddPriorityList(id, def)
+    self.Window:AddPriorityList(id, withTab(def, self.Id))
+    return self
+end
+
+local function copyArray(values)
+    local result = {}
+    for index, value in ipairs(values or {}) do result[index] = value end
+    return result
+end
+
+-- Builds a valid complete order from a proposed order. Unknown entries are
+-- ignored, duplicates are matched by occurrence, and omitted options are
+-- appended in their original Options order.
+local function normalizePriorityOrder(options, proposed)
+    local normalized = {}
+    local used = {}
+
+    if type(proposed) == "table" then
+        for _, proposedValue in ipairs(proposed) do
+            for optionIndex, optionValue in ipairs(options or {}) do
+                if not used[optionIndex] and optionValue == proposedValue then
+                    used[optionIndex] = true
+                    table.insert(normalized, optionValue)
+                    break
+                end
+            end
+        end
+    end
+
+    for optionIndex, optionValue in ipairs(options or {}) do
+        if not used[optionIndex] then table.insert(normalized, optionValue) end
+    end
+
+    return normalized
+end
+
+local function priorityVisibleCount(ctrl)
+    return math.min(ctrl.MaxVisible, #ctrl.Value)
+end
+
+local function priorityListHeight(ctrl)
+    local rowCount = math.max(1, priorityVisibleCount(ctrl))
+    return LAYOUT.RowHeight
+        + (rowCount * LAYOUT.ItemHeight) + 4
+        + LAYOUT.PriorityButtonHeight
+end
+
+local function ensurePrioritySelectionVisible(ctrl)
+    local count = #ctrl.Value
+    if count <= 0 then
+        ctrl.SelectedIndex = 0
+        ctrl.ScrollIndex = 1
+        return
+    end
+
+    ctrl.SelectedIndex = Math.Clamp(ctrl.SelectedIndex or 1, 1, count)
+    local maxStart = math.max(1, count - ctrl.MaxVisible + 1)
+    ctrl.ScrollIndex = Math.Clamp(ctrl.ScrollIndex or 1, 1, maxStart)
+
+    if ctrl.SelectedIndex < ctrl.ScrollIndex then
+        ctrl.ScrollIndex = ctrl.SelectedIndex
+    elseif ctrl.SelectedIndex >= ctrl.ScrollIndex + ctrl.MaxVisible then
+        ctrl.ScrollIndex = ctrl.SelectedIndex - ctrl.MaxVisible + 1
+    end
+
+    ctrl.ScrollIndex = Math.Clamp(ctrl.ScrollIndex, 1, maxStart)
+end
+
 function Window:_registerControl(ctrl)
     -- Window:Add* calls made after tabs exist are placed on the active page.
     -- Tab:Add* still assigns its own page explicitly.
@@ -319,6 +389,8 @@ function Window:_registerControl(ctrl)
         self.Defaults.Sliders[ctrl.Id] = ctrl.Default
     elseif ctrl.Type == "Dropdown" then
         self.Defaults.Dropdowns[ctrl.Id] = ctrl.Default
+    elseif ctrl.Type == "PriorityList" then
+        self.Defaults.PriorityLists[ctrl.Id] = copyArray(ctrl.Default)
     end
 
     self:_markLayoutDirty()
@@ -435,6 +507,35 @@ function Window:AddDropdown(id, def)
     return self
 end
 
+function Window:AddPriorityList(id, def)
+    def = def or {}
+
+    local options = copyArray(def.Options)
+    local defaultOrder = normalizePriorityOrder(options, def.Default or options)
+    local maxVisible = math.max(1, math.floor(tonumber(def.MaxVisible) or 6))
+
+    local ctrl = {
+        Type = "PriorityList",
+        Id = id,
+        Text = def.Text or id,
+        Description = def.Description or "",
+        Column = def.Column,
+        Tab = def.Tab,
+
+        Options = options,
+        Default = copyArray(defaultOrder),
+        Value = copyArray(defaultOrder),
+        MaxVisible = maxVisible,
+        SelectedIndex = (#defaultOrder > 0) and 1 or 0,
+        ScrollIndex = 1,
+
+        Callback = def.Callback
+    }
+
+    self:_registerControl(ctrl)
+    return self
+end
+
 -- Defaults / reset
 function Window:_applyDefaults()
     for _, ctrl in ipairs(self.Controls) do
@@ -446,6 +547,10 @@ function Window:_applyDefaults()
         elseif ctrl.Type == "Dropdown" then
             ctrl.Value = self.Defaults.Dropdowns[ctrl.Id]
             ctrl.Open = false
+            ctrl.ScrollIndex = 1
+        elseif ctrl.Type == "PriorityList" then
+            ctrl.Value = copyArray(self.Defaults.PriorityLists[ctrl.Id])
+            ctrl.SelectedIndex = (#ctrl.Value > 0) and 1 or 0
             ctrl.ScrollIndex = 1
         end
     end
@@ -468,6 +573,8 @@ function Window:_applyControlCallbacks()
                 ok, callbackError = pcall(ctrl.Callback, ctrl.Value, ctrl.Bind)
             elseif ctrl.Type == "Slider" or ctrl.Type == "Dropdown" then
                 ok, callbackError = pcall(ctrl.Callback, ctrl.Value)
+            elseif ctrl.Type == "PriorityList" then
+                ok, callbackError = pcall(ctrl.Callback, copyArray(ctrl.Value))
             else
                 ok = true
             end
@@ -497,6 +604,8 @@ local function serializeConfigControls(controls)
             savedControls[ctrl.Id] = { Type="Slider", Value=ctrl.Value }
         elseif ctrl.Type == "Dropdown" then
             savedControls[ctrl.Id] = { Type="Dropdown", Value=ctrl.Value }
+        elseif ctrl.Type == "PriorityList" then
+            savedControls[ctrl.Id] = { Type="PriorityList", Value=copyArray(ctrl.Value) }
         end
     end
 
@@ -519,6 +628,11 @@ local function restoreConfigControls(controls, savedControls)
                 end
             elseif ctrl.Type == "Dropdown" and saved.Type == "Dropdown" then
                 if type(saved.Value) == "string" then ctrl.Value = saved.Value end
+            elseif ctrl.Type == "PriorityList" and saved.Type == "PriorityList" then
+                if type(saved.Value) == "table" then
+                    ctrl.Value = normalizePriorityOrder(ctrl.Options, saved.Value)
+                    ensurePrioritySelectionVisible(ctrl)
+                end
             end
         end
     end
@@ -799,6 +913,26 @@ function Window:_buildPanels()
                 pack.ScrollTrack = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(30, 30, 30), ZIndex = 7 })
                 pack.ScrollThumb = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(80, 80, 80), ZIndex = 8 })
 
+            elseif ctrl.Type == "PriorityList" then
+                pack.Label = createDrawing("Text", { Text = ctrl.Text, Color = C.TextDim, Size = 13, Outline = true, ZIndex = 4 })
+                pack.ListBg = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(18, 18, 18), ZIndex = 4 })
+                pack.ListBorder = createDrawing("Square", { Filled = false, Thickness = 1, Color = C.Border, ZIndex = 5 })
+
+                pack.Items = {}
+                pack.ItemBgs = {}
+                for i = 1, ctrl.MaxVisible do
+                    pack.ItemBgs[i] = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(25, 25, 25), ZIndex = 5 })
+                    pack.Items[i] = createDrawing("Text", { Text = "", Color = C.TextMain, Size = 13, Outline = true, ZIndex = 6 })
+                end
+
+                pack.ScrollTrack = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(30, 30, 30), ZIndex = 6 })
+                pack.ScrollThumb = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(80, 80, 80), ZIndex = 7 })
+
+                pack.UpBg = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(25, 25, 25), ZIndex = 5 })
+                pack.UpText = createDrawing("Text", { Text = "Up", Color = C.TextMain, Size = 13, Outline = true, ZIndex = 6, Center = true })
+                pack.DownBg = createDrawing("Square", { Filled = true, Color = Color3.fromRGB(25, 25, 25), ZIndex = 5 })
+                pack.DownText = createDrawing("Text", { Text = "Down", Color = C.TextMain, Size = 13, Outline = true, ZIndex = 6, Center = true })
+
             end
 
             UI.ControlsDraw[ctrl.Id] = pack
@@ -996,6 +1130,11 @@ function Window:_computeWindowSizeAndLayout()
             ctrl._rect = { x = x, y = y, w = colW, h = h }
             colY[col] = colY[col] + h
 
+        elseif ctrl.Type == "PriorityList" then
+            h = priorityListHeight(ctrl)
+            ctrl._rect = { x = x, y = y, w = colW, h = h }
+            colY[col] = colY[col] + h
+
         elseif ctrl.Type == "Toggle" or ctrl.Type == "Button" or ctrl.Type == "Dropdown" then
             h = LAYOUT.RowHeight
             ctrl._rect = { x = x, y = y, w = colW, h = h }
@@ -1038,6 +1177,8 @@ function Window:_computeWindowSizeAndLayout()
                         pageY[col] = pageY[col] + LAYOUT.SectionHeight + 6
                     elseif ctrl.Type == "Slider" then
                         pageY[col] = pageY[col] + LAYOUT.SliderHeight
+                    elseif ctrl.Type == "PriorityList" then
+                        pageY[col] = pageY[col] + priorityListHeight(ctrl)
                     elseif ctrl.Type == "Toggle" or ctrl.Type == "Button" or ctrl.Type == "Dropdown" then
                         pageY[col] = pageY[col] + LAYOUT.RowHeight
                         if ctrl.Type == "Dropdown" and ctrl.Open then
@@ -1235,7 +1376,8 @@ function Window:_updateMainUIInteraction(mousePos, m1, m1Click)
         else
             local trackR = ctrl._trackRect
             if trackR and trackR.h > 0 then
-                local maxStart = math.max(1, #ctrl.Options - ctrl.MaxVisible + 1)
+                local itemCount = (ctrl.Type == "PriorityList") and #ctrl.Value or #ctrl.Options
+                local maxStart = math.max(1, itemCount - ctrl.MaxVisible + 1)
                 local deltaY = mousePos.Y - UI.ScrollbarState.StartMouseY
                 local pixelsPerStep = trackR.h / math.max(1, maxStart - 1)
                 local indexDelta = math.floor((deltaY / pixelsPerStep) + 0.5)
@@ -1364,6 +1506,47 @@ for _, ctrl in ipairs(self.Controls) do
                     end
                     ctrl.Open = not ctrl.Open
                     self:_markLayoutDirty()
+                end
+
+            elseif ctrl.Type == "PriorityList" then
+                if ctrl._thumbRect and isInRect(mousePos, ctrl._thumbRect.x, ctrl._thumbRect.y, ctrl._thumbRect.w, ctrl._thumbRect.h) then
+                    UI.ScrollbarState.Active = ctrl
+                    UI.ScrollbarState.StartMouseY = mousePos.Y
+                    UI.ScrollbarState.StartIndex = ctrl.ScrollIndex
+                    return
+                end
+
+                local selectedRow = false
+                local visibleCount = priorityVisibleCount(ctrl)
+                for i = 1, visibleCount do
+                    local itemRect = ctrl._itemRects and ctrl._itemRects[i]
+                    if itemRect and isInRect(mousePos, itemRect.x, itemRect.y, itemRect.w, itemRect.h) then
+                        ctrl.SelectedIndex = ctrl.ScrollIndex + (i - 1)
+                        ensurePrioritySelectionVisible(ctrl)
+                        selectedRow = true
+                        self:_markLayoutDirty()
+                        break
+                    end
+                end
+
+                if not selectedRow and ctrl._upRect and isInRect(mousePos, ctrl._upRect.x, ctrl._upRect.y, ctrl._upRect.w, ctrl._upRect.h) then
+                    local index = ctrl.SelectedIndex
+                    if index > 1 then
+                        ctrl.Value[index - 1], ctrl.Value[index] = ctrl.Value[index], ctrl.Value[index - 1]
+                        ctrl.SelectedIndex = index - 1
+                        ensurePrioritySelectionVisible(ctrl)
+                        if ctrl.Callback then pcall(ctrl.Callback, copyArray(ctrl.Value)) end
+                        self:_markLayoutDirty()
+                    end
+                elseif not selectedRow and ctrl._downRect and isInRect(mousePos, ctrl._downRect.x, ctrl._downRect.y, ctrl._downRect.w, ctrl._downRect.h) then
+                    local index = ctrl.SelectedIndex
+                    if index > 0 and index < #ctrl.Value then
+                        ctrl.Value[index + 1], ctrl.Value[index] = ctrl.Value[index], ctrl.Value[index + 1]
+                        ctrl.SelectedIndex = index + 1
+                        ensurePrioritySelectionVisible(ctrl)
+                        if ctrl.Callback then pcall(ctrl.Callback, copyArray(ctrl.Value)) end
+                        self:_markLayoutDirty()
+                    end
                 end
             end
         end
@@ -1792,6 +1975,135 @@ function Window:_renderMainUI(statusData)
                     ctrl._trackRect = nil
                     ctrl._thumbRect = nil
                 end
+
+            elseif ctrl.Type == "PriorityList" then
+                local xPos = r.x
+                local yPos = r.y
+                local width = r.w
+                local valueCount = #ctrl.Value
+                local visibleCount = priorityVisibleCount(ctrl)
+                local displayRows = math.max(1, visibleCount)
+                local listX = xPos
+                local listY = yPos + LAYOUT.RowHeight
+                local listW = width
+                local listH = (displayRows * LAYOUT.ItemHeight) + 4
+
+                ensurePrioritySelectionVisible(ctrl)
+
+                pack.Label.Text = ctrl.Text
+                pack.Label.Position = Vector2.new(xPos, yPos)
+                pack.Label.Visible = true
+
+                pack.ListBg.Position = Vector2.new(listX, listY)
+                pack.ListBg.Size = Vector2.new(listW, listH)
+                pack.ListBg.Visible = true
+                pack.ListBorder.Position = Vector2.new(listX, listY)
+                pack.ListBorder.Size = Vector2.new(listW, listH)
+                pack.ListBorder.Visible = true
+
+                ctrl._listRect = { x = listX, y = listY, w = listW, h = listH }
+                ctrl._itemRects = {}
+
+                if valueCount <= 0 then
+                    pack.ItemBgs[1].Position = Vector2.new(listX + 2, listY + 2)
+                    pack.ItemBgs[1].Size = Vector2.new(listW - 4, LAYOUT.ItemHeight)
+                    pack.ItemBgs[1].Color = Color3.fromRGB(25, 25, 25)
+                    pack.ItemBgs[1].Visible = true
+                    pack.Items[1].Text = "(no options)"
+                    pack.Items[1].Color = C.TextDim
+                    pack.Items[1].Position = Vector2.new(listX + 6, listY + 3)
+                    pack.Items[1].Visible = true
+                    for i = 2, ctrl.MaxVisible do
+                        pack.ItemBgs[i].Visible = false
+                        pack.Items[i].Visible = false
+                    end
+                else
+                    for i = 1, ctrl.MaxVisible do
+                        if i <= visibleCount then
+                            local optionIndex = ctrl.ScrollIndex + (i - 1)
+                            local optionValue = ctrl.Value[optionIndex]
+                            local itemY = listY + 2 + ((i - 1) * LAYOUT.ItemHeight)
+                            local selected = (optionIndex == ctrl.SelectedIndex)
+
+                            pack.ItemBgs[i].Position = Vector2.new(listX + 2, itemY)
+                            pack.ItemBgs[i].Size = Vector2.new(listW - 4, LAYOUT.ItemHeight)
+                            pack.ItemBgs[i].Color = selected and C.Accent or Color3.fromRGB(25, 25, 25)
+                            pack.ItemBgs[i].Visible = true
+
+                            pack.Items[i].Text = tostring(optionIndex) .. ". " .. tostring(optionValue)
+                            pack.Items[i].Color = C.TextMain
+                            pack.Items[i].Position = Vector2.new(listX + 6, itemY + 1)
+                            pack.Items[i].Visible = true
+
+                            ctrl._itemRects[i] = { x = listX + 2, y = itemY, w = listW - 4, h = LAYOUT.ItemHeight }
+                        else
+                            pack.ItemBgs[i].Visible = false
+                            pack.Items[i].Visible = false
+                        end
+                    end
+                end
+
+                local needsScroll = (valueCount > ctrl.MaxVisible)
+                if needsScroll then
+                    local scrollbarW = 6
+                    local trackX = listX + listW - scrollbarW - 2
+                    local trackY = listY + 2
+                    local trackH = listH - 4
+                    local maxStart = math.max(1, valueCount - ctrl.MaxVisible + 1)
+                    local thumbH = math.max(16, math.floor(trackH * (ctrl.MaxVisible / valueCount)))
+                    local thumbTravel = trackH - thumbH
+                    local thumbT = (ctrl.ScrollIndex - 1) / math.max(1, maxStart - 1)
+                    local thumbY = trackY + math.floor(thumbT * thumbTravel)
+
+                    pack.ScrollTrack.Position = Vector2.new(trackX, trackY)
+                    pack.ScrollTrack.Size = Vector2.new(scrollbarW, trackH)
+                    pack.ScrollTrack.Visible = true
+                    pack.ScrollThumb.Position = Vector2.new(trackX, thumbY)
+                    pack.ScrollThumb.Size = Vector2.new(scrollbarW, thumbH)
+                    pack.ScrollThumb.Color = (UI.ScrollbarState.Active == ctrl)
+                        and Color3.fromRGB(140, 140, 140)
+                        or Color3.fromRGB(80, 80, 80)
+                    pack.ScrollThumb.Visible = true
+
+                    ctrl._trackRect = { x = trackX, y = trackY, w = scrollbarW, h = trackH }
+                    ctrl._thumbRect = { x = trackX, y = thumbY, w = scrollbarW, h = thumbH }
+
+                    for i = 1, visibleCount do
+                        pack.ItemBgs[i].Size = Vector2.new(listW - scrollbarW - 6, LAYOUT.ItemHeight)
+                        ctrl._itemRects[i].w = listW - scrollbarW - 6
+                    end
+                else
+                    pack.ScrollTrack.Visible = false
+                    pack.ScrollThumb.Visible = false
+                    ctrl._trackRect = nil
+                    ctrl._thumbRect = nil
+                end
+
+                local buttonY = listY + listH + 2
+                local buttonGap = 4
+                local buttonW = math.floor((width - buttonGap) / 2)
+                local canMoveUp = ctrl.SelectedIndex > 1
+                local canMoveDown = ctrl.SelectedIndex > 0 and ctrl.SelectedIndex < valueCount
+
+                pack.UpBg.Position = Vector2.new(xPos, buttonY)
+                pack.UpBg.Size = Vector2.new(buttonW, 16)
+                pack.UpBg.Color = canMoveUp and Color3.fromRGB(25, 25, 25) or Color3.fromRGB(18, 18, 18)
+                pack.UpBg.Visible = true
+                pack.UpText.Position = Vector2.new(xPos + (buttonW / 2), buttonY + 6)
+                pack.UpText.Color = canMoveUp and C.TextMain or C.TextHeader
+                pack.UpText.Visible = true
+
+                local downX = xPos + buttonW + buttonGap
+                pack.DownBg.Position = Vector2.new(downX, buttonY)
+                pack.DownBg.Size = Vector2.new(buttonW, 16)
+                pack.DownBg.Color = canMoveDown and Color3.fromRGB(25, 25, 25) or Color3.fromRGB(18, 18, 18)
+                pack.DownBg.Visible = true
+                pack.DownText.Position = Vector2.new(downX + (buttonW / 2), buttonY + 6)
+                pack.DownText.Color = canMoveDown and C.TextMain or C.TextHeader
+                pack.DownText.Visible = true
+
+                ctrl._upRect = { x = xPos, y = buttonY, w = buttonW, h = 16 }
+                ctrl._downRect = { x = downX, y = buttonY, w = buttonW, h = 16 }
             end
         end
     end
@@ -1989,6 +2301,8 @@ function Window:Get(id)
         if ctrl.Id == id then
             if ctrl.Type == "Toggle" or ctrl.Type == "Slider" or ctrl.Type == "Dropdown" then
                 return ctrl.Value, ctrl.Bind
+            elseif ctrl.Type == "PriorityList" then
+                return copyArray(ctrl.Value)
             end
             return nil
         end
@@ -2015,6 +2329,16 @@ function Window:Set(id, value)
                 if type(value) == "string" then
                     ctrl.Value = value
                     if ctrl.Callback then pcall(ctrl.Callback, ctrl.Value) end
+                    self:_markLayoutDirty()
+                    return true
+                end
+            elseif ctrl.Type == "PriorityList" then
+                if type(value) == "table" then
+                    ctrl.Value = normalizePriorityOrder(ctrl.Options, value)
+                    ctrl.SelectedIndex = (#ctrl.Value > 0) and 1 or 0
+                    ctrl.ScrollIndex = 1
+                    ensurePrioritySelectionVisible(ctrl)
+                    if ctrl.Callback then pcall(ctrl.Callback, copyArray(ctrl.Value)) end
                     self:_markLayoutDirty()
                     return true
                 end
@@ -2241,6 +2565,7 @@ function Library:CreateWindow(opts)
         Toggles = {},
         Sliders = {},
         Dropdowns = {},
+        PriorityLists = {},
         Binds = {}
     }
 
