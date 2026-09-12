@@ -36,7 +36,12 @@ local function round(value, places)
     return math.floor(value * power + 0.5) / power
 end
 
-local TEXT_Y_OFFSET = 2
+local UI_SCALE = 0.92
+local TEXT_Y_OFFSET = 4
+
+local function ui(value)
+    return math.max(1, math.floor(value * UI_SCALE + 0.5))
+end
 
 local function rgbToHsv(color)
     local r, g, b = color.R, color.G, color.B
@@ -143,7 +148,7 @@ local Library = {
     OutlineColor = Color3.fromRGB(50, 50, 50),
     RiskColor = Color3.fromRGB(255, 50, 50),
     Black = Color3.new(0, 0, 0),
-    FontSize = 14,
+    FontSize = 13,
     Toggled = true,
     ToggleKey = 0x23,
     Windows = {},
@@ -615,16 +620,16 @@ local function controlHeight(control)
         for _, child in ipairs(control.Controls) do total = total + controlHeight(child) end
         return total
     end
-    if control.Type == "Blank" then return control.Height or 5 end
-    if control.Type == "Label" then return control.Height or 18 end
-    if control.Type == "Divider" then return 10 end
-    if control.Type == "Button" then return 24 end
-    if control.Type == "Toggle" then return 20 end
-    if control.Type == "Slider" then return 40 end
-    if control.Type == "Dropdown" then return 40 end
-    if control.Type == "Input" then return 40 end
-    if control.Type == "KeyPicker" or control.Type == "ColorPicker" then return 22 end
-    return 20
+    if control.Type == "Blank" then return ui(control.Height or 5) end
+    if control.Type == "Label" then return ui(control.Height or 18) end
+    if control.Type == "Divider" then return ui(10) end
+    if control.Type == "Button" then return ui(24) end
+    if control.Type == "Toggle" then return ui(20) end
+    if control.Type == "Slider" then return ui(40) end
+    if control.Type == "Dropdown" then return ui(40) end
+    if control.Type == "Input" then return ui(40) end
+    if control.Type == "KeyPicker" or control.Type == "ColorPicker" then return ui(22) end
+    return ui(20)
 end
 
 local function controlsHeight(controls)
@@ -746,42 +751,42 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Text.Visible = true
 
     elseif control.Type == "Divider" then
-        pack.Line.From = Vector2.new(x, y + 4)
-        pack.Line.To = Vector2.new(x + width, y + 4)
+        pack.Line.From = Vector2.new(x, y + ui(4))
+        pack.Line.To = Vector2.new(x + width, y + ui(4))
         pack.Line.Visible = true
 
     elseif control.Type == "Button" then
         local hovered = inside(self.MousePosition, control._rect)
-        pack.Background.Position = Vector2.new(x, y + 2)
-        pack.Background.Size = Vector2.new(width, 20)
+        pack.Background.Position = Vector2.new(x, y + ui(2))
+        pack.Background.Size = Vector2.new(width, ui(20))
         pack.Background.Color = Library.MainColor
         pack.Background.Visible = true
-        pack.Border.Position = Vector2.new(x, y + 2)
-        pack.Border.Size = Vector2.new(width, 20)
+        pack.Border.Position = Vector2.new(x, y + ui(2))
+        pack.Border.Size = Vector2.new(width, ui(20))
         pack.Border.Color = hovered and Library.AccentColor or Library.Black
         pack.Border.Visible = true
-        pack.InnerBorder.Position = Vector2.new(x + 1, y + 3)
-        pack.InnerBorder.Size = Vector2.new(width - 2, 18)
+        pack.InnerBorder.Position = Vector2.new(x + 1, y + ui(3))
+        pack.InnerBorder.Size = Vector2.new(width - 2, ui(18))
         pack.InnerBorder.Visible = true
         pack.Text.Text = control.Text or "Button"
-        pack.Text.Position = Vector2.new(x + width / 2, y + 7 + TEXT_Y_OFFSET)
+        pack.Text.Position = Vector2.new(x + width / 2, y + ui(7) + TEXT_Y_OFFSET)
         pack.Text.Visible = true
 
     elseif control.Type == "Toggle" then
-        local boxY = y + 3
+        local boxY = y + ui(3)
         pack.Outer.Position = Vector2.new(x, boxY)
-        pack.Outer.Size = Vector2.new(14, 14)
+        pack.Outer.Size = Vector2.new(ui(14), ui(14))
         pack.Outer.Visible = true
         pack.Inner.Position = Vector2.new(x + 1, boxY + 1)
-        pack.Inner.Size = Vector2.new(12, 12)
+        pack.Inner.Size = Vector2.new(ui(12), ui(12))
         pack.Inner.Visible = true
-        pack.Fill.Position = Vector2.new(x + 3, boxY + 3)
-        pack.Fill.Size = Vector2.new(8, 8)
+        pack.Fill.Position = Vector2.new(x + ui(3), boxY + ui(3))
+        pack.Fill.Size = Vector2.new(ui(8), ui(8))
         pack.Fill.Color = control.Risky and Library.RiskColor or Library.AccentColor
         pack.Fill.Visible = control.Value == true
         pack.Text.Text = control.Text or control.Id
         pack.Text.Color = control.Risky and Library.RiskColor or Library.FontColor
-        pack.Text.Position = Vector2.new(x + 20, y + 2 + TEXT_Y_OFFSET)
+        pack.Text.Position = Vector2.new(x + ui(20), y + ui(2) + TEXT_Y_OFFSET)
         pack.Text.Visible = true
 
     elseif control.Type == "Slider" then
@@ -792,26 +797,26 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Value.Text = tostring(control.Value) .. tostring(control.Suffix or "")
         pack.Value.Position = Vector2.new(x + width - 30, y + 1 + TEXT_Y_OFFSET)
         pack.Value.Visible = true
-        pack.Bar.Position = Vector2.new(x, y + 20)
-        pack.Bar.Size = Vector2.new(width, 13)
+        pack.Bar.Position = Vector2.new(x, y + ui(20))
+        pack.Bar.Size = Vector2.new(width, ui(13))
         pack.Bar.Visible = true
-        pack.Border.Position = Vector2.new(x, y + 20)
-        pack.Border.Size = Vector2.new(width, 13)
+        pack.Border.Position = Vector2.new(x, y + ui(20))
+        pack.Border.Size = Vector2.new(width, ui(13))
         pack.Border.Visible = true
-        pack.Fill.Position = Vector2.new(x + 1, y + 21)
-        pack.Fill.Size = Vector2.new(math.max(0, (width - 2) * percent), 11)
+        pack.Fill.Position = Vector2.new(x + 1, y + ui(21))
+        pack.Fill.Size = Vector2.new(math.max(0, (width - 2) * percent), ui(11))
         pack.Fill.Visible = true
-        control._barRect = { x = x, y = y + 20, w = width, h = 13 }
+        control._barRect = { x = x, y = y + ui(20), w = width, h = ui(13) }
 
     elseif control.Type == "Dropdown" or control.Type == "Input" then
         pack.Text.Text = control.Text or control.Id
         pack.Text.Position = Vector2.new(x, y + TEXT_Y_OFFSET)
         pack.Text.Visible = true
-        pack.Box.Position = Vector2.new(x, y + 17)
-        pack.Box.Size = Vector2.new(width, 19)
+        pack.Box.Position = Vector2.new(x, y + ui(17))
+        pack.Box.Size = Vector2.new(width, ui(19))
         pack.Box.Visible = true
-        pack.Border.Position = Vector2.new(x, y + 17)
-        pack.Border.Size = Vector2.new(width, 19)
+        pack.Border.Position = Vector2.new(x, y + ui(17))
+        pack.Border.Size = Vector2.new(width, ui(19))
         pack.Border.Color = self.CaptureInput == control and Library.AccentColor or Library.OutlineColor
         pack.Border.Visible = true
         local text
@@ -822,40 +827,40 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
             if self.CaptureInput == control then text = text .. "_" end
         end
         pack.Value.Text = text
-        pack.Value.Position = Vector2.new(x + width / 2, y + 21 + TEXT_Y_OFFSET)
+        pack.Value.Position = Vector2.new(x + width / 2, y + ui(21) + TEXT_Y_OFFSET)
         pack.Value.Visible = true
-        control._boxRect = { x = x, y = y + 17, w = width, h = 19 }
+        control._boxRect = { x = x, y = y + ui(17), w = width, h = ui(19) }
 
     elseif control.Type == "KeyPicker" then
         pack.Text.Text = control.Text or control.Id
         pack.Text.Position = Vector2.new(x, y + 2 + TEXT_Y_OFFSET)
         pack.Text.Visible = not control.NoUI
-        local boxW = 80
+        local boxW = ui(80)
         local boxX = x + width - boxW
         pack.Box.Position = Vector2.new(boxX, y + 1)
-        pack.Box.Size = Vector2.new(boxW, 18)
+        pack.Box.Size = Vector2.new(boxW, ui(18))
         pack.Box.Visible = not control.NoUI
         pack.Border.Position = Vector2.new(boxX, y + 1)
-        pack.Border.Size = Vector2.new(boxW, 18)
+        pack.Border.Size = Vector2.new(boxW, ui(18))
         pack.Border.Color = self.CaptureKey == control and Library.AccentColor or Library.OutlineColor
         pack.Border.Visible = not control.NoUI
         pack.Value.Text = self.CaptureKey == control and "[...]" or ("[" .. keyName(control.Value) .. "]")
         pack.Value.Position = Vector2.new(boxX + boxW / 2, y + 5 + TEXT_Y_OFFSET)
         pack.Value.Visible = not control.NoUI
-        control._boxRect = { x = boxX, y = y + 1, w = boxW, h = 18 }
+        control._boxRect = { x = boxX, y = y + 1, w = boxW, h = ui(18) }
 
     elseif control.Type == "ColorPicker" then
         pack.Text.Text = control.Text or control.Id
         pack.Text.Position = Vector2.new(x, y + 2 + TEXT_Y_OFFSET)
         pack.Text.Visible = true
-        pack.Swatch.Position = Vector2.new(x + width - 38, y + 2)
-        pack.Swatch.Size = Vector2.new(38, 16)
+        pack.Swatch.Position = Vector2.new(x + width - ui(38), y + ui(2))
+        pack.Swatch.Size = Vector2.new(ui(38), ui(16))
         pack.Swatch.Color = control.Value
         pack.Swatch.Visible = true
-        pack.Border.Position = Vector2.new(x + width - 38, y + 2)
-        pack.Border.Size = Vector2.new(38, 16)
+        pack.Border.Position = Vector2.new(x + width - ui(38), y + ui(2))
+        pack.Border.Size = Vector2.new(ui(38), ui(16))
         pack.Border.Visible = true
-        control._boxRect = { x = x + width - 38, y = y + 2, w = 38, h = 16 }
+        control._boxRect = { x = x + width - ui(38), y = y + ui(2), w = ui(38), h = ui(16) }
     end
 
     return y + height
@@ -863,7 +868,7 @@ end
 
 function WindowMethods:_renderGroup(group, x, y, width, activeList)
     local pack = self:_ensureGroupPack(group)
-    local height = 26 + controlsHeight(group.Controls)
+    local height = ui(26) + controlsHeight(group.Controls)
     group._rect = { x = x, y = y, w = width, h = height }
 
     pack.Background.Position = Vector2.new(x, y)
@@ -879,12 +884,12 @@ function WindowMethods:_renderGroup(group, x, y, width, activeList)
     pack.Accent.Size = Vector2.new(width - 2, 2)
     pack.Accent.Visible = true
     pack.Title.Text = group.Name or ""
-    pack.Title.Position = Vector2.new(x + 6, y + 5 + TEXT_Y_OFFSET)
+    pack.Title.Position = Vector2.new(x + ui(6), y + ui(5) + TEXT_Y_OFFSET)
     pack.Title.Visible = true
 
-    local controlY = y + 23
+    local controlY = y + ui(23)
     for _, control in ipairs(group.Controls) do
-        controlY = self:_renderControl(control, x + 7, controlY, width - 14, activeList)
+        controlY = self:_renderControl(control, x + ui(7), controlY, width - ui(14), activeList)
     end
     return height
 end
@@ -901,7 +906,7 @@ end
 function WindowMethods:_renderTabbox(tabbox, x, y, width, activeList)
     local pack = self:_ensureTabboxPack(tabbox)
     local active = tabbox.Active
-    local height = 25 + (active and controlsHeight(active.Controls) or 0)
+    local height = ui(25) + (active and controlsHeight(active.Controls) or 0)
     tabbox._rect = { x = x, y = y, w = width, h = height }
     pack.Background.Position = Vector2.new(x, y)
     pack.Background.Size = Vector2.new(width, height)
@@ -922,13 +927,13 @@ function WindowMethods:_renderTabbox(tabbox, x, y, width, activeList)
                 }
             end
             local px = x + (index - 1) * tabWidth
-            page._tabRect = { x = px, y = y, w = tabWidth, h = 20 }
+            page._tabRect = { x = px, y = y, w = tabWidth, h = ui(20) }
             page._tabPack.Background.Position = Vector2.new(px, y)
-            page._tabPack.Background.Size = Vector2.new(tabWidth, 20)
+            page._tabPack.Background.Size = Vector2.new(tabWidth, ui(20))
             page._tabPack.Background.Color = page == active and Library.BackgroundColor or Library.MainColor
             page._tabPack.Background.Visible = true
             page._tabPack.Text.Text = page.Name
-            page._tabPack.Text.Position = Vector2.new(px + tabWidth / 2, y + 5 + TEXT_Y_OFFSET)
+            page._tabPack.Text.Position = Vector2.new(px + tabWidth / 2, y + ui(5) + TEXT_Y_OFFSET)
             page._tabPack.Text.Visible = true
             page._tabPack.Accent.Position = Vector2.new(px, y)
             page._tabPack.Accent.Size = Vector2.new(tabWidth, 2)
@@ -937,9 +942,9 @@ function WindowMethods:_renderTabbox(tabbox, x, y, width, activeList)
     end
 
     if active then
-        local controlY = y + 23
+        local controlY = y + ui(23)
         for _, control in ipairs(active.Controls) do
-            controlY = self:_renderControl(control, x + 7, controlY, width - 14, activeList)
+            controlY = self:_renderControl(control, x + ui(7), controlY, width - ui(14), activeList)
         end
     end
     return height
@@ -957,7 +962,8 @@ function WindowMethods:_renderDropdownOverlay(control)
 
     local count = math.min(8, #control.Values)
     local x, y, width = control._boxRect.x, control._boxRect.y + control._boxRect.h + 1, control._boxRect.w
-    local height = count * 20 + 2
+    local itemHeight = ui(20)
+    local height = count * itemHeight + 2
     control._listRect = { x = x, y = y, w = width, h = height }
     control._itemRects = {}
     control._listPack.Background.Position = Vector2.new(x, y)
@@ -975,17 +981,17 @@ function WindowMethods:_renderDropdownOverlay(control)
             }
         end
         local item = control._listPack.Items[index]
-        local itemY = y + 1 + (index - 1) * 20
+        local itemY = y + 1 + (index - 1) * itemHeight
         local value = control.Values[index]
         local selected = control.Multi and control.Value[value] == true or (not control.Multi and control.Value == value)
-        control._itemRects[index] = { x = x + 1, y = itemY, w = width - 2, h = 20 }
+        control._itemRects[index] = { x = x + 1, y = itemY, w = width - 2, h = itemHeight }
         item.Background.Position = Vector2.new(x + 1, itemY)
-        item.Background.Size = Vector2.new(width - 2, 20)
+        item.Background.Size = Vector2.new(width - 2, itemHeight)
         item.Background.Color = selected and Library.MainColor or Library.BackgroundColor
         item.Background.Visible = true
         item.Text.Text = (selected and "[x] " or "") .. tostring(value)
         item.Text.Color = selected and Library.AccentColor or Library.FontColor
-        item.Text.Position = Vector2.new(x + 6, itemY + 3 + TEXT_Y_OFFSET)
+        item.Text.Position = Vector2.new(x + ui(6), itemY + ui(3) + TEXT_Y_OFFSET)
         item.Text.Visible = true
     end
 end
@@ -1206,7 +1212,7 @@ function WindowMethods:_render()
     frame.Background.Size = size
     frame.Background.Visible = true
     frame.Header.Position = Vector2.new(position.X + 1, position.Y + 1)
-    frame.Header.Size = Vector2.new(size.X - 2, 24)
+    frame.Header.Size = Vector2.new(size.X - 2, ui(24))
     frame.Header.Visible = true
     frame.Border.Position = position
     frame.Border.Size = size
@@ -1218,26 +1224,26 @@ function WindowMethods:_render()
     frame.Accent.Size = Vector2.new(size.X - 2, 2)
     frame.Accent.Visible = true
     frame.Title.Text = self.Title
-    frame.Title.Position = Vector2.new(position.X + 7, position.Y + 6 + TEXT_Y_OFFSET)
+    frame.Title.Position = Vector2.new(position.X + ui(7), position.Y + ui(6) + TEXT_Y_OFFSET)
     frame.Title.Visible = true
-    frame.TabLine.From = Vector2.new(position.X + 1, position.Y + 48)
-    frame.TabLine.To = Vector2.new(position.X + size.X - 1, position.Y + 48)
+    frame.TabLine.From = Vector2.new(position.X + 1, position.Y + ui(48))
+    frame.TabLine.To = Vector2.new(position.X + size.X - 1, position.Y + ui(48))
     frame.TabLine.Visible = true
 
-    self._headerRect = { x = position.X, y = position.Y, w = size.X, h = 24 }
+    self._headerRect = { x = position.X, y = position.Y, w = size.X, h = ui(24) }
     local tabCount = #self.TabList
     if tabCount > 0 then
-        local tabWidth = (size.X - 12) / tabCount
+        local tabWidth = (size.X - ui(12)) / tabCount
         for index, tab in ipairs(self.TabList) do
             local pack = self:_ensureTabPack(tab)
-            local x = position.X + 6 + (index - 1) * tabWidth
-            tab._rect = { x = x, y = position.Y + 27, w = tabWidth, h = 20 }
-            pack.Background.Position = Vector2.new(x, position.Y + 27)
-            pack.Background.Size = Vector2.new(tabWidth, 20)
+            local x = position.X + ui(6) + (index - 1) * tabWidth
+            tab._rect = { x = x, y = position.Y + ui(27), w = tabWidth, h = ui(20) }
+            pack.Background.Position = Vector2.new(x, position.Y + ui(27))
+            pack.Background.Size = Vector2.new(tabWidth, ui(20))
             pack.Background.Color = tab == self.ActiveTab and Library.MainColor or Library.BackgroundColor
             pack.Background.Visible = true
             pack.Text.Text = tab.Name
-            pack.Text.Position = Vector2.new(x + tabWidth / 2, position.Y + 32 + TEXT_Y_OFFSET)
+            pack.Text.Position = Vector2.new(x + tabWidth / 2, position.Y + ui(32) + TEXT_Y_OFFSET)
             pack.Text.Visible = true
             pack.Accent.Position = Vector2.new(x, position.Y + 27)
             pack.Accent.Size = Vector2.new(tabWidth, 2)
@@ -1249,30 +1255,30 @@ function WindowMethods:_render()
     self._activeTabboxPages = {}
     local activeTab = self.ActiveTab
     if activeTab then
-        local gap = 8
-        local columnWidth = math.floor((size.X - 24) / 2)
-        local leftX = position.X + 8
+        local gap = ui(8)
+        local columnWidth = math.floor((size.X - ui(24)) / 2)
+        local leftX = position.X + ui(8)
         local rightX = leftX + columnWidth + gap
-        local leftY = position.Y + 56
-        local rightY = position.Y + 56
+        local leftY = position.Y + ui(56)
+        local rightY = position.Y + ui(56)
 
         for _, group in ipairs(activeTab.Groups) do
             if group.Side == 1 then
                 local height = self:_renderGroup(group, leftX, leftY, columnWidth, self._activeControls)
-                leftY = leftY + height + 8
+                leftY = leftY + height + ui(8)
             else
                 local height = self:_renderGroup(group, rightX, rightY, columnWidth, self._activeControls)
-                rightY = rightY + height + 8
+                rightY = rightY + height + ui(8)
             end
         end
 
         for _, tabbox in ipairs(activeTab.TabboxesList) do
             if tabbox.Side == 1 then
                 local height = self:_renderTabbox(tabbox, leftX, leftY, columnWidth, self._activeControls)
-                leftY = leftY + height + 8
+                leftY = leftY + height + ui(8)
             else
                 local height = self:_renderTabbox(tabbox, rightX, rightY, columnWidth, self._activeControls)
-                rightY = rightY + height + 8
+                rightY = rightY + height + ui(8)
             end
             for _, page in ipairs(tabbox.TabList) do table.insert(self._activeTabboxPages, { Box = tabbox, Page = page }) end
         end
@@ -1714,6 +1720,8 @@ function Library:CreateWindow(...)
     end
     if type(info.Width) == "number" then width = info.Width end
     if type(info.Height) == "number" then height = info.Height end
+    width = math.floor(width * UI_SCALE + 0.5)
+    height = math.floor(height * UI_SCALE + 0.5)
 
     local position = Vector2.new(100, 100)
     if info.Position then
