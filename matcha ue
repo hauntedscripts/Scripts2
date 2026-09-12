@@ -13,6 +13,13 @@ end
 local Mouse = LocalPlayer:GetMouse()
 local Environment = (type(getgenv) == "function" and getgenv()) or _G
 
+-- Stop an older copy before creating new Drawing objects. Re-executing the
+-- library without this leaves two render loops fighting over the same screen.
+local PreviousLibrary = Environment.UELibrary
+if PreviousLibrary and type(PreviousLibrary.Unload) == "function" then
+    pcall(function() PreviousLibrary:Unload() end)
+end
+
 local Toggles = Environment.Toggles or {}
 local Options = Environment.Options or {}
 Environment.Toggles = Toggles
@@ -225,6 +232,12 @@ function ControlMethods:SetValue(value)
 
     safeCallback(self.Callback, self.Value)
     safeCallback(self.Changed, self.Value)
+    -- Sliders update continuously while dragged; forcing a full visibility
+    -- refresh there would bring the flicker back. Dependencies are normally
+    -- driven by toggles/dropdowns, so only those invalidate the visible set.
+    if self.Window and (self.Type == "Toggle" or self.Type == "Dropdown") then
+        self.Window._visibilityDirty = true
+    end
     return self
 end
 
@@ -239,6 +252,7 @@ end
 
 function ControlMethods:SetValues(values)
     if self.Type == "Dropdown" then self.Values = values or {} end
+    if self.Window then self.Window._visibilityDirty = true end
     return self
 end
 
@@ -290,11 +304,17 @@ function ControlMethods:RefreshKeybinds() return self end
 function ControlMethods:Display() return self end
 function ControlMethods:BuildDropdownList() return self end
 function ControlMethods:CloseDropdown()
-    if self.Window and self.Window.OpenDropdown == self then self.Window.OpenDropdown = nil end
+    if self.Window and self.Window.OpenDropdown == self then
+        self.Window.OpenDropdown = nil
+        self.Window._visibilityDirty = true
+    end
     return self
 end
 function ControlMethods:OpenDropdown()
-    if self.Window and self.Type == "Dropdown" then self.Window.OpenDropdown = self end
+    if self.Window and self.Type == "Dropdown" then
+        self.Window.OpenDropdown = self
+        self.Window._visibilityDirty = true
+    end
     return self
 end
 function ControlMethods:DoClick()
@@ -519,6 +539,8 @@ end
 
 function TabMethods:ShowTab()
     self.Window.ActiveTab = self
+    self.Window.OpenDropdown = nil
+    self.Window._visibilityDirty = true
     return self
 end
 
@@ -533,7 +555,12 @@ function TabboxMethods:AddTab(name)
     self.Tabs[name] = page
     table.insert(self.TabList, page)
     if not self.Active then self.Active = page end
-    function page:Show() self.Tabbox.Active = self return self end
+    function page:Show()
+        self.Tabbox.Active = self
+        self.Window.OpenDropdown = nil
+        self.Window._visibilityDirty = true
+        return self
+    end
     function page:Hide() return self end
     return page
 end
@@ -923,8 +950,26 @@ end
 
 function WindowMethods:_render()
     self:_ensureFrame()
-    for _, object in ipairs(self._drawings) do object.Visible = false end
-    if not self.Visible or not Library.Toggled or Library._unloaded then return end
+    local shouldDraw = self.Visible and Library.Toggled and not Library._unloaded
+    if not shouldDraw then
+        if not self._allHidden then
+            for _, object in ipairs(self._drawings) do object.Visible = false end
+            self._allHidden = true
+        end
+        return
+    end
+
+    if self._allHidden then
+        self._allHidden = false
+        self._visibilityDirty = true
+    end
+
+    -- Only clear stale drawings after a structural visibility change. Clearing
+    -- every frame made Matcha visibly flicker and generated heavy property traffic.
+    if self._visibilityDirty then
+        for _, object in ipairs(self._drawings) do object.Visible = false end
+        self._visibilityDirty = false
+    end
 
     self.MousePosition = Vector2.new(Mouse.X, Mouse.Y)
     local position, size = self.Position, self.Size
@@ -1029,6 +1074,7 @@ function WindowMethods:_handleDropdownClick(mousePosition)
                 control.Value = value
                 self.OpenDropdown = nil
             end
+            self._visibilityDirty = true
             safeCallback(control.Callback, control.Value)
             safeCallback(control.Changed, control.Value)
             return true
@@ -1036,6 +1082,7 @@ function WindowMethods:_handleDropdownClick(mousePosition)
     end
     if not inside(mousePosition, control._listRect) and not inside(mousePosition, control._boxRect) then
         self.OpenDropdown = nil
+        self._visibilityDirty = true
     end
     return false
 end
@@ -1185,6 +1232,7 @@ function WindowMethods:Step()
             if inside(mousePosition, tab._rect) then
                 self.ActiveTab = tab
                 self.OpenDropdown = nil
+                self._visibilityDirty = true
                 self.LastMouseDown = mouseDown
                 return
             end
@@ -1194,6 +1242,7 @@ function WindowMethods:Step()
             if inside(mousePosition, entry.Page._tabRect) then
                 entry.Box.Active = entry.Page
                 self.OpenDropdown = nil
+                self._visibilityDirty = true
                 self.LastMouseDown = mouseDown
                 return
             end
@@ -1216,6 +1265,7 @@ function WindowMethods:Step()
                     handled = true
                 elseif control.Type == "Dropdown" and inside(mousePosition, control._boxRect) then
                     self.OpenDropdown = self.OpenDropdown == control and nil or control
+                    self._visibilityDirty = true
                     handled = true
                 elseif control.Type == "Input" and inside(mousePosition, control._boxRect) then
                     self.CaptureInput = control
@@ -1262,6 +1312,7 @@ end
 function WindowMethods:Show()
     self.Visible = true
     Library.Toggled = true
+    self._visibilityDirty = true
     return self
 end
 
@@ -1272,6 +1323,7 @@ end
 
 function WindowMethods:Toggle()
     self.Visible = not self.Visible
+    if self.Visible then self._visibilityDirty = true end
     return self.Visible
 end
 
@@ -1318,7 +1370,8 @@ function Library:CreateWindow(...)
         Tabs = {}, TabList = {}, ActiveTab = nil,
         _drawings = {}, _activeControls = {}, _activeTabboxPages = {},
         LastMouseDown = false, Destroyed = false,
-        MousePosition = Vector2.new(Mouse.X, Mouse.Y)
+        MousePosition = Vector2.new(Mouse.X, Mouse.Y),
+        _visibilityDirty = true, _allHidden = false
     }, WindowMethods)
 
     table.insert(self.Windows, window)
@@ -1331,7 +1384,7 @@ function Library:CreateWindow(...)
                 warn("UE Matcha UI step error: " .. tostring(err))
                 task.wait(0.25)
             else
-                task.wait()
+                task.wait(0.016)
             end
         end
     end)
@@ -1343,6 +1396,7 @@ function Library:Toggle()
     self.Toggled = not self.Toggled
     for _, window in ipairs(self.Windows) do
         window.Visible = self.Toggled
+        if self.Toggled then window._visibilityDirty = true end
     end
     return self.Toggled
 end
