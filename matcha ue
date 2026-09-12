@@ -36,6 +36,48 @@ local function round(value, places)
     return math.floor(value * power + 0.5) / power
 end
 
+local TEXT_Y_OFFSET = 2
+
+local function rgbToHsv(color)
+    local r, g, b = color.R, color.G, color.B
+    local maximum = math.max(r, g, b)
+    local minimum = math.min(r, g, b)
+    local delta = maximum - minimum
+    local hue = 0
+
+    if delta > 0 then
+        if maximum == r then
+            hue = ((g - b) / delta) % 6
+        elseif maximum == g then
+            hue = ((b - r) / delta) + 2
+        else
+            hue = ((r - g) / delta) + 4
+        end
+        hue = hue / 6
+    end
+
+    local saturation = maximum == 0 and 0 or delta / maximum
+    return hue, saturation, maximum
+end
+
+local function hsvToRgb(hue, saturation, value)
+    hue = (hue or 0) % 1
+    saturation = clamp(saturation or 0, 0, 1)
+    value = clamp(value or 0, 0, 1)
+    local section = math.floor(hue * 6)
+    local fraction = hue * 6 - section
+    local p = value * (1 - saturation)
+    local q = value * (1 - fraction * saturation)
+    local t = value * (1 - (1 - fraction) * saturation)
+    section = section % 6
+    if section == 0 then return Color3.new(value, t, p) end
+    if section == 1 then return Color3.new(q, value, p) end
+    if section == 2 then return Color3.new(p, value, t) end
+    if section == 3 then return Color3.new(p, q, value) end
+    if section == 4 then return Color3.new(t, p, value) end
+    return Color3.new(value, p, q)
+end
+
 local function inside(point, rect)
     return rect and point.X >= rect.x and point.X <= rect.x + rect.w
         and point.Y >= rect.y and point.Y <= rect.y + rect.h
@@ -700,7 +742,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
     local pack = self:_ensureControlPack(control)
     if control.Type == "Label" then
         pack.Text.Text = control.Text or ""
-        pack.Text.Position = Vector2.new(x, y + 1)
+        pack.Text.Position = Vector2.new(x, y + 1 + TEXT_Y_OFFSET)
         pack.Text.Visible = true
 
     elseif control.Type == "Divider" then
@@ -722,7 +764,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.InnerBorder.Size = Vector2.new(width - 2, 18)
         pack.InnerBorder.Visible = true
         pack.Text.Text = control.Text or "Button"
-        pack.Text.Position = Vector2.new(x + width / 2, y + 7)
+        pack.Text.Position = Vector2.new(x + width / 2, y + 7 + TEXT_Y_OFFSET)
         pack.Text.Visible = true
 
     elseif control.Type == "Toggle" then
@@ -739,16 +781,16 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Fill.Visible = control.Value == true
         pack.Text.Text = control.Text or control.Id
         pack.Text.Color = control.Risky and Library.RiskColor or Library.FontColor
-        pack.Text.Position = Vector2.new(x + 20, y + 2)
+        pack.Text.Position = Vector2.new(x + 20, y + 2 + TEXT_Y_OFFSET)
         pack.Text.Visible = true
 
     elseif control.Type == "Slider" then
         local percent = (control.Value - control.Min) / math.max(0.0001, control.Max - control.Min)
         pack.Text.Text = control.Text or control.Id
-        pack.Text.Position = Vector2.new(x, y)
+        pack.Text.Position = Vector2.new(x, y + TEXT_Y_OFFSET)
         pack.Text.Visible = true
         pack.Value.Text = tostring(control.Value) .. tostring(control.Suffix or "")
-        pack.Value.Position = Vector2.new(x + width - 30, y + 1)
+        pack.Value.Position = Vector2.new(x + width - 30, y + 1 + TEXT_Y_OFFSET)
         pack.Value.Visible = true
         pack.Bar.Position = Vector2.new(x, y + 20)
         pack.Bar.Size = Vector2.new(width, 13)
@@ -763,7 +805,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
 
     elseif control.Type == "Dropdown" or control.Type == "Input" then
         pack.Text.Text = control.Text or control.Id
-        pack.Text.Position = Vector2.new(x, y)
+        pack.Text.Position = Vector2.new(x, y + TEXT_Y_OFFSET)
         pack.Text.Visible = true
         pack.Box.Position = Vector2.new(x, y + 17)
         pack.Box.Size = Vector2.new(width, 19)
@@ -780,13 +822,13 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
             if self.CaptureInput == control then text = text .. "_" end
         end
         pack.Value.Text = text
-        pack.Value.Position = Vector2.new(x + width / 2, y + 21)
+        pack.Value.Position = Vector2.new(x + width / 2, y + 21 + TEXT_Y_OFFSET)
         pack.Value.Visible = true
         control._boxRect = { x = x, y = y + 17, w = width, h = 19 }
 
     elseif control.Type == "KeyPicker" then
         pack.Text.Text = control.Text or control.Id
-        pack.Text.Position = Vector2.new(x, y + 2)
+        pack.Text.Position = Vector2.new(x, y + 2 + TEXT_Y_OFFSET)
         pack.Text.Visible = not control.NoUI
         local boxW = 80
         local boxX = x + width - boxW
@@ -798,13 +840,13 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Border.Color = self.CaptureKey == control and Library.AccentColor or Library.OutlineColor
         pack.Border.Visible = not control.NoUI
         pack.Value.Text = self.CaptureKey == control and "[...]" or ("[" .. keyName(control.Value) .. "]")
-        pack.Value.Position = Vector2.new(boxX + boxW / 2, y + 5)
+        pack.Value.Position = Vector2.new(boxX + boxW / 2, y + 5 + TEXT_Y_OFFSET)
         pack.Value.Visible = not control.NoUI
         control._boxRect = { x = boxX, y = y + 1, w = boxW, h = 18 }
 
     elseif control.Type == "ColorPicker" then
         pack.Text.Text = control.Text or control.Id
-        pack.Text.Position = Vector2.new(x, y + 2)
+        pack.Text.Position = Vector2.new(x, y + 2 + TEXT_Y_OFFSET)
         pack.Text.Visible = true
         pack.Swatch.Position = Vector2.new(x + width - 38, y + 2)
         pack.Swatch.Size = Vector2.new(38, 16)
@@ -837,7 +879,7 @@ function WindowMethods:_renderGroup(group, x, y, width, activeList)
     pack.Accent.Size = Vector2.new(width - 2, 2)
     pack.Accent.Visible = true
     pack.Title.Text = group.Name or ""
-    pack.Title.Position = Vector2.new(x + 6, y + 5)
+    pack.Title.Position = Vector2.new(x + 6, y + 5 + TEXT_Y_OFFSET)
     pack.Title.Visible = true
 
     local controlY = y + 23
@@ -886,7 +928,7 @@ function WindowMethods:_renderTabbox(tabbox, x, y, width, activeList)
             page._tabPack.Background.Color = page == active and Library.BackgroundColor or Library.MainColor
             page._tabPack.Background.Visible = true
             page._tabPack.Text.Text = page.Name
-            page._tabPack.Text.Position = Vector2.new(px + tabWidth / 2, y + 5)
+            page._tabPack.Text.Position = Vector2.new(px + tabWidth / 2, y + 5 + TEXT_Y_OFFSET)
             page._tabPack.Text.Visible = true
             page._tabPack.Accent.Position = Vector2.new(px, y)
             page._tabPack.Accent.Size = Vector2.new(tabWidth, 2)
@@ -943,13 +985,197 @@ function WindowMethods:_renderDropdownOverlay(control)
         item.Background.Visible = true
         item.Text.Text = (selected and "[x] " or "") .. tostring(value)
         item.Text.Color = selected and Library.AccentColor or Library.FontColor
-        item.Text.Position = Vector2.new(x + 6, itemY + 3)
+        item.Text.Position = Vector2.new(x + 6, itemY + 3 + TEXT_Y_OFFSET)
         item.Text.Visible = true
+    end
+end
+
+local COLOR_PICKER = {
+    Width = 250, Height = 236,
+    SVWidth = 180, SVHeight = 104,
+    SVColumns = 12, SVRows = 8,
+    HueSegments = 16
+}
+
+function WindowMethods:_ensureColorPickerPack()
+    if self._colorPickerPack then return self._colorPickerPack end
+    local pack = {
+        Background = self:_draw("Square", { Filled = true, Color = Library.BackgroundColor, ZIndex = 40 }),
+        Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 47 }),
+        Header = self:_draw("Text", { Text = "COLOR PICKER", Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 48 }),
+        Hint = self:_draw("Text", { Text = "RGB: click a number, type 0-255, press Enter", Color = Library.FontColor, Size = 12, Outline = true, ZIndex = 48 }),
+        Preview = self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 44 }),
+        PreviewBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 45 }),
+        SVCursor = self:_draw("Square", { Filled = false, Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46 }),
+        HueCursor = self:_draw("Line", { Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46 }),
+        SVCells = {}, HueCells = {}, Rows = {}
+    }
+
+    for row = 1, COLOR_PICKER.SVRows do
+        for column = 1, COLOR_PICKER.SVColumns do
+            table.insert(pack.SVCells, self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 42 }))
+        end
+    end
+    for index = 1, COLOR_PICKER.HueSegments do
+        table.insert(pack.HueCells, self:_draw("Square", { Filled = true, Color = hsvToRgb((index - 1) / COLOR_PICKER.HueSegments, 1, 1), ZIndex = 42 }))
+    end
+    for _, channel in ipairs({ "R", "G", "B" }) do
+        pack.Rows[channel] = {
+            Label = self:_draw("Text", { Text = channel, Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 45 }),
+            Box = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 43 }),
+            BoxBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 45 }),
+            Value = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 46 }),
+            Bar = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 43 }),
+            Fill = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 44 }),
+            BarBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 45 })
+        }
+    end
+    self._colorPickerPack = pack
+    return pack
+end
+
+function WindowMethods:_renderColorPickerOverlay(control)
+    if not control or not control._boxRect then return end
+    local pack = self:_ensureColorPickerPack()
+    local viewport = workspace.CurrentCamera.ViewportSize
+    local x = control._boxRect.x + control._boxRect.w - COLOR_PICKER.Width
+    local y = control._boxRect.y + control._boxRect.h + 3
+    if x < 4 then x = 4 end
+    if x + COLOR_PICKER.Width > viewport.X - 4 then x = viewport.X - COLOR_PICKER.Width - 4 end
+    if y + COLOR_PICKER.Height > viewport.Y - 4 then y = control._boxRect.y - COLOR_PICKER.Height - 3 end
+    if y < 4 then y = 4 end
+
+    control._pickerRect = { x = x, y = y, w = COLOR_PICKER.Width, h = COLOR_PICKER.Height }
+    local svX, svY = x + 8, y + 25
+    local hueX, hueY = svX + COLOR_PICKER.SVWidth + 8, svY
+    control._svRect = { x = svX, y = svY, w = COLOR_PICKER.SVWidth, h = COLOR_PICKER.SVHeight }
+    control._hueRect = { x = hueX, y = hueY, w = 16, h = COLOR_PICKER.SVHeight }
+
+    local hue, saturation, value = rgbToHsv(control.Value)
+    if control._pickerHue ~= nil then hue = control._pickerHue else control._pickerHue = hue end
+
+    local refresh = self._visibilityRefresh or pack.ActiveControl ~= control
+    local layoutChanged = pack.LayoutX ~= x or pack.LayoutY ~= y
+    local hueChanged = pack.RenderedHue == nil or math.abs(pack.RenderedHue - hue) > 0.0001
+    pack.ActiveControl = control
+    pack.LayoutX, pack.LayoutY = x, y
+    pack.RenderedHue = hue
+
+    if layoutChanged then
+        pack.Background.Position = Vector2.new(x, y)
+        pack.Background.Size = Vector2.new(COLOR_PICKER.Width, COLOR_PICKER.Height)
+        pack.Border.Position = Vector2.new(x, y)
+        pack.Border.Size = Vector2.new(COLOR_PICKER.Width, COLOR_PICKER.Height)
+        pack.Header.Position = Vector2.new(x + 8, y + 5 + TEXT_Y_OFFSET)
+        pack.Hint.Position = Vector2.new(x + 8, y + 213 + TEXT_Y_OFFSET)
+    end
+    if refresh then
+        pack.Background.Visible = true
+        pack.Border.Visible = true
+        pack.Header.Visible = true
+        pack.Hint.Visible = true
+    end
+
+    local cellW = COLOR_PICKER.SVWidth / COLOR_PICKER.SVColumns
+    local cellH = COLOR_PICKER.SVHeight / COLOR_PICKER.SVRows
+    local cellIndex = 1
+    for row = 1, COLOR_PICKER.SVRows do
+        local cellValue = 1 - ((row - 1) / math.max(1, COLOR_PICKER.SVRows - 1))
+        for column = 1, COLOR_PICKER.SVColumns do
+            local cellSaturation = (column - 1) / math.max(1, COLOR_PICKER.SVColumns - 1)
+            local cell = pack.SVCells[cellIndex]
+            if layoutChanged then
+                cell.Position = Vector2.new(svX + (column - 1) * cellW, svY + (row - 1) * cellH)
+                cell.Size = Vector2.new(cellW + 1, cellH + 1)
+            end
+            if hueChanged then cell.Color = hsvToRgb(hue, cellSaturation, cellValue) end
+            if refresh then cell.Visible = true end
+            cellIndex = cellIndex + 1
+        end
+    end
+
+    local hueCellH = COLOR_PICKER.SVHeight / COLOR_PICKER.HueSegments
+    for index, cell in ipairs(pack.HueCells) do
+        if layoutChanged then
+            cell.Position = Vector2.new(hueX, hueY + (index - 1) * hueCellH)
+            cell.Size = Vector2.new(16, hueCellH + 1)
+        end
+        if refresh then cell.Visible = true end
+    end
+
+    local cursorX = svX + saturation * COLOR_PICKER.SVWidth
+    local cursorY = svY + (1 - value) * COLOR_PICKER.SVHeight
+    pack.SVCursor.Position = Vector2.new(cursorX - 3, cursorY - 3)
+    pack.SVCursor.Size = Vector2.new(6, 6)
+    if refresh then pack.SVCursor.Visible = true end
+    local hueYPosition = hueY + hue * COLOR_PICKER.SVHeight
+    pack.HueCursor.From = Vector2.new(hueX - 2, hueYPosition)
+    pack.HueCursor.To = Vector2.new(hueX + 18, hueYPosition)
+    if refresh then pack.HueCursor.Visible = true end
+
+    if layoutChanged then
+        pack.Preview.Position = Vector2.new(x + 222, y + 25)
+        pack.Preview.Size = Vector2.new(20, 20)
+        pack.PreviewBorder.Position = Vector2.new(x + 222, y + 25)
+        pack.PreviewBorder.Size = Vector2.new(20, 20)
+    end
+    pack.Preview.Color = control.Value
+    if refresh then
+        pack.Preview.Visible = true
+        pack.PreviewBorder.Visible = true
+    end
+
+    local values = {
+        R = math.floor(control.Value.R * 255 + 0.5),
+        G = math.floor(control.Value.G * 255 + 0.5),
+        B = math.floor(control.Value.B * 255 + 0.5)
+    }
+    control._rgbRects = {}
+    local channels = { "R", "G", "B" }
+    for index, channel in ipairs(channels) do
+        local rowY = y + 140 + (index - 1) * 24
+        local row = pack.Rows[channel]
+        local boxRect = { x = x + 25, y = rowY, w = 52, h = 18 }
+        local barRect = { x = x + 87, y = rowY + 3, w = 155, h = 12 }
+        control._rgbRects[channel] = { Box = boxRect, Bar = barRect }
+        if layoutChanged then
+            row.Label.Position = Vector2.new(x + 8, rowY + 2 + TEXT_Y_OFFSET)
+            row.Box.Position = Vector2.new(boxRect.x, boxRect.y)
+            row.Box.Size = Vector2.new(boxRect.w, boxRect.h)
+            row.BoxBorder.Position = Vector2.new(boxRect.x, boxRect.y)
+            row.BoxBorder.Size = Vector2.new(boxRect.w, boxRect.h)
+            row.Value.Position = Vector2.new(boxRect.x + boxRect.w / 2, boxRect.y + 4 + TEXT_Y_OFFSET)
+            row.Bar.Position = Vector2.new(barRect.x, barRect.y)
+            row.Bar.Size = Vector2.new(barRect.w, barRect.h)
+            row.Fill.Position = Vector2.new(barRect.x + 1, barRect.y + 1)
+            row.BarBorder.Position = Vector2.new(barRect.x, barRect.y)
+            row.BarBorder.Size = Vector2.new(barRect.w, barRect.h)
+        end
+        row.BoxBorder.Color = self.ColorInput and self.ColorInput.Control == control and self.ColorInput.Channel == channel and Library.AccentColor or Library.OutlineColor
+        local displayValue = tostring(values[channel])
+        if self.ColorInput and self.ColorInput.Control == control and self.ColorInput.Channel == channel then
+            displayValue = self.ColorInput.Buffer .. "_"
+        end
+        row.Value.Text = displayValue
+        row.Fill.Size = Vector2.new(math.max(0, (barRect.w - 2) * values[channel] / 255), barRect.h - 2)
+        if refresh then
+            row.Label.Visible = true
+            row.Box.Visible = true
+            row.BoxBorder.Visible = true
+            row.Value.Visible = true
+            row.Bar.Visible = true
+            row.Fill.Color = channel == "R" and Color3.fromRGB(255, 70, 70)
+                or channel == "G" and Color3.fromRGB(70, 255, 100)
+                or Color3.fromRGB(70, 130, 255)
+            row.Fill.Visible = true
+            row.BarBorder.Visible = true
+        end
     end
 end
 
 function WindowMethods:_render()
     self:_ensureFrame()
+    self._visibilityRefresh = false
     local shouldDraw = self.Visible and Library.Toggled and not Library._unloaded
     if not shouldDraw then
         if not self._allHidden then
@@ -969,6 +1195,7 @@ function WindowMethods:_render()
     if self._visibilityDirty then
         for _, object in ipairs(self._drawings) do object.Visible = false end
         self._visibilityDirty = false
+        self._visibilityRefresh = true
     end
 
     self.MousePosition = Vector2.new(Mouse.X, Mouse.Y)
@@ -991,7 +1218,7 @@ function WindowMethods:_render()
     frame.Accent.Size = Vector2.new(size.X - 2, 2)
     frame.Accent.Visible = true
     frame.Title.Text = self.Title
-    frame.Title.Position = Vector2.new(position.X + 7, position.Y + 6)
+    frame.Title.Position = Vector2.new(position.X + 7, position.Y + 6 + TEXT_Y_OFFSET)
     frame.Title.Visible = true
     frame.TabLine.From = Vector2.new(position.X + 1, position.Y + 48)
     frame.TabLine.To = Vector2.new(position.X + size.X - 1, position.Y + 48)
@@ -1010,7 +1237,7 @@ function WindowMethods:_render()
             pack.Background.Color = tab == self.ActiveTab and Library.MainColor or Library.BackgroundColor
             pack.Background.Visible = true
             pack.Text.Text = tab.Name
-            pack.Text.Position = Vector2.new(x + tabWidth / 2, position.Y + 32)
+            pack.Text.Position = Vector2.new(x + tabWidth / 2, position.Y + 32 + TEXT_Y_OFFSET)
             pack.Text.Visible = true
             pack.Accent.Position = Vector2.new(x, position.Y + 27)
             pack.Accent.Size = Vector2.new(tabWidth, 2)
@@ -1052,15 +1279,9 @@ function WindowMethods:_render()
     end
 
     if self.OpenDropdown then self:_renderDropdownOverlay(self.OpenDropdown) end
+    if self.OpenColorPicker then self:_renderColorPickerOverlay(self.OpenColorPicker) end
+    self._visibilityRefresh = false
 end
-
-local palette = {
-    Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 70, 70),
-    Color3.fromRGB(255, 160, 40), Color3.fromRGB(255, 230, 60),
-    Color3.fromRGB(70, 220, 90), Color3.fromRGB(60, 210, 220),
-    Color3.fromRGB(70, 120, 255), Color3.fromRGB(170, 80, 255),
-    Color3.fromRGB(255, 80, 190)
-}
 
 function WindowMethods:_handleDropdownClick(mousePosition)
     local control = self.OpenDropdown
@@ -1084,6 +1305,133 @@ function WindowMethods:_handleDropdownClick(mousePosition)
         self.OpenDropdown = nil
         self._visibilityDirty = true
     end
+    return false
+end
+
+function WindowMethods:_setColorChannel(control, channel, numberValue)
+    local r = math.floor(control.Value.R * 255 + 0.5)
+    local g = math.floor(control.Value.G * 255 + 0.5)
+    local b = math.floor(control.Value.B * 255 + 0.5)
+    numberValue = clamp(math.floor((tonumber(numberValue) or 0) + 0.5), 0, 255)
+    if channel == "R" then r = numberValue end
+    if channel == "G" then g = numberValue end
+    if channel == "B" then b = numberValue end
+    control._pickerHue = nil
+    control:SetValueRGB(Color3.fromRGB(r, g, b), control.Transparency)
+end
+
+function WindowMethods:_updateColorDrag(mousePosition, mouseDown)
+    local drag = self.ColorDrag
+    if not drag then return end
+    if not mouseDown then self.ColorDrag = nil return end
+    local control = drag.Control
+    if not control or self.OpenColorPicker ~= control then self.ColorDrag = nil return end
+
+    if drag.Kind == "SV" and control._svRect then
+        local saturation = clamp((mousePosition.X - control._svRect.x) / control._svRect.w, 0, 1)
+        local value = 1 - clamp((mousePosition.Y - control._svRect.y) / control._svRect.h, 0, 1)
+        local hue = control._pickerHue or 0
+        control:SetValueRGB(hsvToRgb(hue, saturation, value), control.Transparency)
+    elseif drag.Kind == "Hue" and control._hueRect then
+        local hue = clamp((mousePosition.Y - control._hueRect.y) / control._hueRect.h, 0, 0.9999)
+        local _, saturation, value = rgbToHsv(control.Value)
+        control._pickerHue = hue
+        control:SetValueRGB(hsvToRgb(hue, saturation, value), control.Transparency)
+    elseif drag.Kind == "RGB" and control._rgbRects and control._rgbRects[drag.Channel] then
+        local rect = control._rgbRects[drag.Channel].Bar
+        local percent = clamp((mousePosition.X - rect.x) / rect.w, 0, 1)
+        self:_setColorChannel(control, drag.Channel, percent * 255)
+    end
+end
+
+function WindowMethods:_startColorInput(control, channel)
+    local current = channel == "R" and control.Value.R or channel == "G" and control.Value.G or control.Value.B
+    self.ColorInput = {
+        Control = control, Channel = channel,
+        Buffer = tostring(math.floor(current * 255 + 0.5)),
+        Replace = true, Ready = false, Keys = {}
+    }
+end
+
+function WindowMethods:_finishColorInput(applyValue)
+    local input = self.ColorInput
+    if not input then return end
+    if applyValue and input.Buffer ~= "" then
+        self:_setColorChannel(input.Control, input.Channel, tonumber(input.Buffer) or 0)
+    end
+    self.ColorInput = nil
+end
+
+function WindowMethods:_updateColorInput(mouseDown)
+    local input = self.ColorInput
+    if not input then return false end
+    if not input.Ready then
+        if not mouseDown then input.Ready = true end
+        return true
+    end
+
+    local function pressedOnce(code)
+        local pressed = iskeypressed(code)
+        local once = pressed and not input.Keys[code]
+        input.Keys[code] = pressed
+        return once
+    end
+
+    if pressedOnce(0x1B) then self:_finishColorInput(false) return true end
+    if pressedOnce(0x0D) then self:_finishColorInput(true) return true end
+    if pressedOnce(0x08) then
+        input.Buffer = string.sub(input.Buffer, 1, math.max(0, #input.Buffer - 1))
+        input.Replace = false
+    end
+    for code = 0x30, 0x39 do
+        if pressedOnce(code) then
+            local digit = string.char(code)
+            if input.Replace then input.Buffer = digit else input.Buffer = input.Buffer .. digit end
+            input.Replace = false
+            if #input.Buffer > 3 then input.Buffer = string.sub(input.Buffer, 1, 3) end
+        end
+    end
+    return true
+end
+
+function WindowMethods:_handleColorPickerClick(mousePosition)
+    local control = self.OpenColorPicker
+    if not control then return false end
+
+    if inside(mousePosition, control._svRect) then
+        self.ColorDrag = { Control = control, Kind = "SV" }
+        self:_updateColorDrag(mousePosition, true)
+        return true
+    end
+    if inside(mousePosition, control._hueRect) then
+        self.ColorDrag = { Control = control, Kind = "Hue" }
+        self:_updateColorDrag(mousePosition, true)
+        return true
+    end
+    for _, channel in ipairs({ "R", "G", "B" }) do
+        local rects = control._rgbRects and control._rgbRects[channel]
+        if rects and inside(mousePosition, rects.Box) then
+            self:_startColorInput(control, channel)
+            return true
+        end
+        if rects and inside(mousePosition, rects.Bar) then
+            self.ColorDrag = { Control = control, Kind = "RGB", Channel = channel }
+            self:_updateColorDrag(mousePosition, true)
+            return true
+        end
+    end
+    if inside(mousePosition, control._pickerRect) then return true end
+    if inside(mousePosition, control._boxRect) then
+        self.OpenColorPicker = nil
+        self.ColorInput = nil
+        self._visibilityDirty = true
+        return true
+    end
+
+    self.OpenColorPicker = nil
+    self.ColorInput = nil
+    self.ColorDrag = nil
+    self._visibilityDirty = true
     return false
 end
 
@@ -1198,6 +1546,8 @@ function WindowMethods:Step()
     local mouseDown = ismouse1pressed()
     local mouseClick = mouseDown and not self.LastMouseDown
 
+    self:_updateColorDrag(mousePosition, mouseDown)
+    if self:_updateColorInput(mouseDown) then self.LastMouseDown = mouseDown return end
     self:_updateKeyPickers()
     if self:_updateKeyCapture() then self.LastMouseDown = mouseDown return end
     if self:_updateInputCapture() then self.LastMouseDown = mouseDown return end
@@ -1227,11 +1577,14 @@ function WindowMethods:Step()
 
     if mouseClick then
         if self:_handleDropdownClick(mousePosition) then self.LastMouseDown = mouseDown return end
+        if self:_handleColorPickerClick(mousePosition) then self.LastMouseDown = mouseDown return end
 
         for _, tab in ipairs(self.TabList) do
             if inside(mousePosition, tab._rect) then
                 self.ActiveTab = tab
                 self.OpenDropdown = nil
+                self.OpenColorPicker = nil
+                self.ColorInput = nil
                 self._visibilityDirty = true
                 self.LastMouseDown = mouseDown
                 return
@@ -1242,6 +1595,8 @@ function WindowMethods:Step()
             if inside(mousePosition, entry.Page._tabRect) then
                 entry.Box.Active = entry.Page
                 self.OpenDropdown = nil
+                self.OpenColorPicker = nil
+                self.ColorInput = nil
                 self._visibilityDirty = true
                 self.LastMouseDown = mouseDown
                 return
@@ -1265,6 +1620,8 @@ function WindowMethods:Step()
                     handled = true
                 elseif control.Type == "Dropdown" and inside(mousePosition, control._boxRect) then
                     self.OpenDropdown = self.OpenDropdown == control and nil or control
+                    self.OpenColorPicker = nil
+                    self.ColorInput = nil
                     self._visibilityDirty = true
                     handled = true
                 elseif control.Type == "Input" and inside(mousePosition, control._boxRect) then
@@ -1275,8 +1632,15 @@ function WindowMethods:Step()
                     self:_startKeyCapture(control)
                     handled = true
                 elseif control.Type == "ColorPicker" and inside(mousePosition, control._boxRect) then
-                    control.PaletteIndex = (control.PaletteIndex % #palette) + 1
-                    control:SetValueRGB(palette[control.PaletteIndex], control.Transparency)
+                    self.OpenColorPicker = self.OpenColorPicker == control and nil or control
+                    self.OpenDropdown = nil
+                    self.ColorInput = nil
+                    self.ColorDrag = nil
+                    if self.OpenColorPicker then
+                        local hue = rgbToHsv(control.Value)
+                        control._pickerHue = hue
+                    end
+                    self._visibilityDirty = true
                     handled = true
                 end
             end
