@@ -2104,7 +2104,9 @@ function Library:CreateWindow(...)
 
     table.insert(self.Windows, window)
     self.Toggled = window.Visible
-    if info.SettingsTab ~= false and info.BuiltInSettings ~= false then
+    -- AutoShow=false windows are auxiliary popups. They use their own close
+    -- buttons and must not receive another Settings tab or an End keybind.
+    if info.AutoShow ~= false and info.SettingsTab ~= false and info.BuiltInSettings ~= false then
         window:_buildSettingsTab(width, height)
     end
 
