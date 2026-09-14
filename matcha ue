@@ -881,7 +881,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Fill.Visible = control.Value == true
         pack.Text.Text = control.Text or control.Id
         pack.Text.Color = control.Risky and Library.RiskColor or Library.FontColor
-        pack.Text.Position = Vector2.new(x + ui(20), y + ui(2) + TEXT_Y_OFFSET + 2)
+        pack.Text.Position = Vector2.new(x + ui(20), y + ui(2) + TEXT_Y_OFFSET - 2)
         pack.Text.Visible = true
 
         local picker = control.InlineKeyPicker
