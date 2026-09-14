@@ -751,6 +751,8 @@ function WindowMethods:_ensureFrame()
         Accent = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 6 }),
         Title = self:_draw("Text", { Text = self.Title, Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 7 }),
         TabLine = self:_draw("Line", { Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 }),
+        BottomBorder = self:_draw("Line", { Thickness = 1, Color = Library.Black, ZIndex = 7 }),
+        BottomInnerBorder = self:_draw("Line", { Thickness = 1, Color = Library.OutlineColor, ZIndex = 6 }),
         DragWireframe = self:_draw("Square", { Filled = false, Thickness = 2, Color = Library.AccentColor, ZIndex = 60 })
     }
     self.Frame.Gradient = {}
@@ -794,6 +796,7 @@ function WindowMethods:_ensureControlPack(control)
         pack.Background = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 7 })
         pack.Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 8 })
         pack.InnerBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 9 })
+        pack.BottomBorder = self:_draw("Line", { Thickness = 1, Color = Library.Black, ZIndex = 10 })
         pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 10 })
     elseif control.Type == "Toggle" then
         pack.Outer = self:_draw("Square", { Filled = true, Color = Library.Black, ZIndex = 7 })
@@ -865,6 +868,11 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.InnerBorder.Position = Vector2.new(x + 1, y + ui(3))
         pack.InnerBorder.Size = Vector2.new(width - 2, ui(18))
         pack.InnerBorder.Visible = true
+        local buttonBottom = y + ui(2) + ui(20) - 1
+        pack.BottomBorder.From = Vector2.new(x, buttonBottom)
+        pack.BottomBorder.To = Vector2.new(x + width - 1, buttonBottom)
+        pack.BottomBorder.Color = hovered and Library.AccentColor or Library.Black
+        pack.BottomBorder.Visible = true
         pack.Text.Text = control.Text or "Button"
         pack.Text.Position = Vector2.new(x + width / 2, y + ui(7) + TEXT_Y_OFFSET + 2)
         pack.Text.Visible = true
@@ -950,7 +958,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
             if self.CaptureInput == control then text = text .. "_" end
         end
         pack.Value.Text = text
-        pack.Value.Position = Vector2.new(x + width / 2, y + ui(21) + TEXT_Y_OFFSET)
+        pack.Value.Position = Vector2.new(x + width / 2, y + ui(21) + TEXT_Y_OFFSET + 2)
         pack.Value.Visible = true
         control._boxRect = { x = x, y = y + ui(17), w = width, h = ui(19) }
 
@@ -1116,7 +1124,7 @@ function WindowMethods:_renderDropdownOverlay(control)
         item.Background.Visible = true
         item.Text.Text = (selected and "[x] " or "") .. tostring(value)
         item.Text.Color = selected and Library.AccentColor or Library.FontColor
-        item.Text.Position = Vector2.new(x + ui(6), itemY + ui(3) + TEXT_Y_OFFSET)
+        item.Text.Position = Vector2.new(x + ui(6), itemY + ui(3) + TEXT_Y_OFFSET + 2)
         item.Text.Visible = true
     end
 end
@@ -1360,6 +1368,12 @@ function WindowMethods:_render()
     frame.InnerBorder.Position = Vector2.new(position.X + 1, position.Y + 1)
     frame.InnerBorder.Size = Vector2.new(size.X - 2, size.Y - 2)
     frame.InnerBorder.Visible = true
+    frame.BottomBorder.From = Vector2.new(position.X, position.Y + size.Y - 1)
+    frame.BottomBorder.To = Vector2.new(position.X + size.X - 1, position.Y + size.Y - 1)
+    frame.BottomBorder.Visible = true
+    frame.BottomInnerBorder.From = Vector2.new(position.X + 1, position.Y + size.Y - 2)
+    frame.BottomInnerBorder.To = Vector2.new(position.X + size.X - 2, position.Y + size.Y - 2)
+    frame.BottomInnerBorder.Visible = true
     frame.Accent.Position = Vector2.new(position.X + 1, position.Y + 1)
     frame.Accent.Size = Vector2.new(size.X - 2, 2)
     frame.Accent.Visible = true
