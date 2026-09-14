@@ -38,6 +38,7 @@ end
 
 local UI_SCALE = 0.92
 local TEXT_Y_OFFSET = 4
+local TAB_TEXT_Y_OFFSET = 2
 
 local function ui(value)
     return math.max(1, math.floor(value * UI_SCALE + 0.5))
@@ -1308,7 +1309,7 @@ function WindowMethods:_render()
             pack.Background.Color = tab == self.ActiveTab and Library.MainColor or Library.BackgroundColor
             pack.Background.Visible = true
             pack.Text.Text = tab.Name
-            pack.Text.Position = Vector2.new(x + tabWidth / 2, position.Y + ui(32) + TEXT_Y_OFFSET)
+            pack.Text.Position = Vector2.new(x + tabWidth / 2, position.Y + ui(32) + TEXT_Y_OFFSET + TAB_TEXT_Y_OFFSET)
             pack.Text.Visible = true
             pack.Accent.Position = Vector2.new(x, position.Y + 27)
             pack.Accent.Size = Vector2.new(tabWidth, 2)
