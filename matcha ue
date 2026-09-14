@@ -185,12 +185,14 @@ Library.Options = Options
 
 local function drawing(drawType, properties, owner)
     local object = Drawing.new(drawType)
-    for key, value in pairs(properties or {}) do object[key] = value end
+    for key, value in pairs(properties or {}) do
+        if key ~= "NoTheme" then object[key] = value end
+    end
     object.Visible = false
     object.Transparency = Library.UIOpacity
     table.insert(Library._drawings, object)
     local initialColor = properties and properties.Color
-    if initialColor then
+    if initialColor and not properties.NoTheme then
         local themeFields = {
             "BackgroundColor", "MainColor", "OutlineColor", "FontColor",
             "GradientTopColor", "GradientBottomColor"
@@ -811,7 +813,7 @@ function WindowMethods:_ensureControlPack(control)
         pack.Value = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 9 })
     elseif control.Type == "ColorPicker" then
         pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 8 })
-        pack.Swatch = self:_draw("Square", { Filled = true, Color = control.Value, ZIndex = 8 })
+        pack.Swatch = self:_draw("Square", { Filled = true, Color = control.Value, ZIndex = 8, NoTheme = true })
         pack.Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 9 })
     end
 
@@ -1133,21 +1135,21 @@ function WindowMethods:_ensureColorPickerPack()
         Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 47 }),
         Header = self:_draw("Text", { Text = "COLOR PICKER", Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 48 }),
         Hint = self:_draw("Text", { Text = "RGB: click a number, type 0-255, press Enter", Color = Library.FontColor, Size = 12, Outline = true, ZIndex = 48 }),
-        Preview = self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 44 }),
+        Preview = self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 44, NoTheme = true }),
         PreviewBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 45 }),
-        SVCursor = self:_draw("Square", { Filled = false, Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46 }),
-        HueCursor = self:_draw("Line", { Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46 }),
+        SVCursor = self:_draw("Square", { Filled = false, Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46, NoTheme = true }),
+        HueCursor = self:_draw("Line", { Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46, NoTheme = true }),
         SVCells = {}, HueCells = {}, Rows = {}
     }
 
     for row = 1, COLOR_PICKER.SVRows do
         for column = 1, COLOR_PICKER.SVColumns do
-            table.insert(pack.SVCells, self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 42 }))
+            table.insert(pack.SVCells, self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 42, NoTheme = true }))
         end
     end
     for index = 1, COLOR_PICKER.HueSegments do
         local hueCenter = (index - 0.5) / COLOR_PICKER.HueSegments
-        table.insert(pack.HueCells, self:_draw("Square", { Filled = true, Color = hsvToRgb(hueCenter % 1, 1, 1), ZIndex = 42 }))
+        table.insert(pack.HueCells, self:_draw("Square", { Filled = true, Color = hsvToRgb(hueCenter % 1, 1, 1), ZIndex = 42, NoTheme = true }))
     end
     for _, channel in ipairs({ "R", "G", "B" }) do
         pack.Rows[channel] = {
