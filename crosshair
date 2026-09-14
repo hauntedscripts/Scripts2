@@ -1,0 +1,332 @@
+local UE_URL = "https://raw.githubusercontent.com/hauntedscripts/Scripts2/refs/heads/main/matcha%20ue"
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do wait(0.1); LocalPlayer = Players.LocalPlayer end
+local Mouse = LocalPlayer:GetMouse()
+
+local chunk, loadError = loadstring(game:HttpGet(UE_URL), "Animated Crosshair UE")
+if not chunk then error(loadError or "Could not compile UE") end
+local returned = chunk()
+local env = (type(getgenv) == "function" and getgenv()) or _G
+local Library = returned or env.UELibrary or env.Library
+if type(Library) ~= "table" then error("UE did not return Library") end
+
+local previous = env.LacedCrosshair
+if previous and type(previous.Unload) == "function" then pcall(previous.Unload) end
+
+local S = {
+    enabled = true,
+    followMouse = false,
+    smoothFollow = true,
+    spin = true,
+    gradient = true,
+    rainbow = false,
+    pulse = true,
+    dot = true,
+    outline = true,
+    size = 28,
+    gap = 7,
+    thickness = 2,
+    opacity = 1,
+    spinSpeed = 110,
+    gradientSpeed = 1.5,
+    pulseSpeed = 2,
+    pulseAmount = 0.22,
+    followSpeed = 12,
+    everyFrame = true,
+    targetFPS = 60,
+    gradientQuality = 32,
+    color1 = Color3.fromRGB(0, 170, 255),
+    color2 = Color3.fromRGB(210, 70, 255),
+    outlineColor = Color3.fromRGB(0, 0, 0),
+    running = true
+}
+
+local drawings = {}
+local arms = {}
+local MAX_SEGMENTS = 48
+
+local function make(kind, properties)
+    local object = Drawing.new(kind)
+    for key, value in pairs(properties) do object[key] = value end
+    object.Visible = false
+    table.insert(drawings, object)
+    return object
+end
+
+for index = 1, 4 do
+    arms[index] = {
+        outline = make("Line", { Thickness = 4, Color = S.outlineColor, ZIndex = 20 }),
+        segments = {}
+    }
+    for segment = 1, MAX_SEGMENTS do
+        arms[index].segments[segment] = make("Line", { Thickness = S.thickness, Color = S.color1, ZIndex = 21 })
+    end
+end
+
+local dotOutline = make("Circle", {
+    Radius = 3, NumSides = 20, Thickness = 1, Filled = true,
+    Color = S.outlineColor, ZIndex = 20
+})
+local dot = make("Circle", {
+    Radius = 2, NumSides = 20, Thickness = 1, Filled = true,
+    Color = S.color1, ZIndex = 21
+})
+
+local function removeAll()
+    if not S.running then return end
+    S.running = false
+    for _, object in ipairs(drawings) do pcall(function() object:Remove() end) end
+end
+
+env.LacedCrosshair = { Unload = removeAll, Settings = S }
+Library:OnUnload(removeAll)
+
+local function clamp(value, minimum, maximum)
+    if value < minimum then return minimum end
+    if value > maximum then return maximum end
+    return value
+end
+
+local function lerpColor(a, b, alpha)
+    return Color3.new(
+        a.R + (b.R - a.R) * alpha,
+        a.G + (b.G - a.G) * alpha,
+        a.B + (b.B - a.B) * alpha
+    )
+end
+
+local function hsvColor(hue)
+    hue = hue % 1
+    local section = math.floor(hue * 6)
+    local fraction = hue * 6 - section
+    local q, t = 1 - fraction, fraction
+    section = section % 6
+    if section == 0 then return Color3.new(1, t, 0) end
+    if section == 1 then return Color3.new(q, 1, 0) end
+    if section == 2 then return Color3.new(0, 1, t) end
+    if section == 3 then return Color3.new(0, q, 1) end
+    if section == 4 then return Color3.new(t, 0, 1) end
+    return Color3.new(1, 0, q)
+end
+
+local Window = Library:CreateWindow({
+    Title = "laced.club | Crosshair",
+    Width = 540,
+    Height = 570,
+    AutoShow = true,
+    Center = true
+})
+
+local Main = Window:AddTab("Crosshair")
+local General = Main:AddLeftGroupbox("General")
+local Effects = Main:AddRightGroupbox("Animation")
+local Shape = Main:AddLeftGroupbox("Shape")
+local Colors = Main:AddRightGroupbox("Colors")
+
+General:AddToggleWithKeybind("crosshair_enabled", "crosshair_key", {
+    Text = "Crosshair Enabled", Default = true, DefaultKey = "F6",
+    Keybind = { Mode = "Toggle", SyncToggleState = true },
+    Callback = function(value) S.enabled = value end
+})
+General:AddToggle("crosshair_follow_mouse", {
+    Text = "Follow Mouse", Default = false,
+    Callback = function(value) S.followMouse = value end
+})
+General:AddToggle("crosshair_smooth_follow", {
+    Text = "Smooth / Lerp Follow", Default = true,
+    Callback = function(value) S.smoothFollow = value end
+})
+General:AddToggle("crosshair_dot", {
+    Text = "Center Dot", Default = true,
+    Callback = function(value) S.dot = value end
+})
+General:AddToggle("crosshair_outline", {
+    Text = "Outline", Default = true,
+    Callback = function(value) S.outline = value end
+})
+
+Effects:AddToggle("crosshair_spin", {
+    Text = "Spin", Default = true,
+    Callback = function(value) S.spin = value end
+})
+Effects:AddSlider("crosshair_spin_speed", {
+    Text = "Spin Speed", Min = -720, Max = 720, Default = 110,
+    Rounding = 0, Suffix = " deg/s", Callback = function(value) S.spinSpeed = value end
+})
+Effects:AddToggle("crosshair_gradient", {
+    Text = "Moving Gradient", Default = true,
+    Callback = function(value) S.gradient = value end
+})
+Effects:AddToggle("crosshair_rainbow", {
+    Text = "Rainbow Gradient", Default = false,
+    Callback = function(value) S.rainbow = value end
+})
+Effects:AddSlider("crosshair_gradient_speed", {
+    Text = "Gradient Speed", Min = 0.05, Max = 8, Default = 1.5,
+    Rounding = 2, Callback = function(value) S.gradientSpeed = value end
+})
+Effects:AddSlider("crosshair_gradient_quality", {
+    Text = "Gradient Quality", Min = 4, Max = MAX_SEGMENTS, Default = 32,
+    Rounding = 0, Suffix = " segments", Callback = function(value) S.gradientQuality = value end
+})
+Effects:AddToggle("crosshair_pulse", {
+    Text = "Lerp / Pulse", Default = true,
+    Callback = function(value) S.pulse = value end
+})
+Effects:AddSlider("crosshair_pulse_speed", {
+    Text = "Pulse Speed", Min = 0.1, Max = 8, Default = 2,
+    Rounding = 1, Callback = function(value) S.pulseSpeed = value end
+})
+Effects:AddSlider("crosshair_pulse_amount", {
+    Text = "Pulse Amount", Min = 0, Max = 1, Default = 0.22,
+    Rounding = 2, Callback = function(value) S.pulseAmount = value end
+})
+Effects:AddToggle("crosshair_every_frame", {
+    Text = "Update Every Frame", Default = true,
+    Callback = function(value) S.everyFrame = value end
+})
+Effects:AddSlider("crosshair_target_fps", {
+    Text = "Target FPS", Min = 10, Max = 240, Default = 60,
+    Rounding = 0, Suffix = " FPS", Callback = function(value) S.targetFPS = value end
+})
+
+Shape:AddSlider("crosshair_size", {
+    Text = "Size", Min = 1, Max = 300, Default = 28,
+    Rounding = 0, Suffix = " px", Callback = function(value) S.size = value end
+})
+Shape:AddSlider("crosshair_gap", {
+    Text = "Center Gap", Min = 0, Max = 150, Default = 7,
+    Rounding = 0, Suffix = " px", Callback = function(value) S.gap = value end
+})
+Shape:AddSlider("crosshair_thickness", {
+    Text = "Thickness", Min = 1, Max = 15, Default = 2,
+    Rounding = 0, Suffix = " px", Callback = function(value) S.thickness = value end
+})
+Shape:AddSlider("crosshair_opacity", {
+    Text = "Opacity", Min = 0.1, Max = 1, Default = 1,
+    Rounding = 2, Callback = function(value) S.opacity = value end
+})
+Shape:AddSlider("crosshair_follow_speed", {
+    Text = "Lerp Speed", Min = 1, Max = 40, Default = 12,
+    Rounding = 0, Callback = function(value) S.followSpeed = value end
+})
+Shape:AddButton({ Text = "Reset Crosshair", Func = function()
+    S.size, S.gap, S.thickness = 28, 7, 2
+    S.spinSpeed, S.gradientSpeed = 110, 1.5
+    S.pulseSpeed, S.pulseAmount, S.opacity = 2, 0.22, 1
+    Library.Options.crosshair_size:SetValue(28)
+    Library.Options.crosshair_gap:SetValue(7)
+    Library.Options.crosshair_thickness:SetValue(2)
+    Library.Options.crosshair_spin_speed:SetValue(110)
+    Library.Options.crosshair_gradient_speed:SetValue(1.5)
+    Library.Options.crosshair_pulse_speed:SetValue(2)
+    Library.Options.crosshair_pulse_amount:SetValue(0.22)
+    Library.Options.crosshair_opacity:SetValue(1)
+end })
+
+Colors:AddColorPicker("crosshair_color_1", {
+    Text = "Primary Color", Default = S.color1,
+    Callback = function(color) S.color1 = color end
+})
+Colors:AddColorPicker("crosshair_color_2", {
+    Text = "Secondary Color", Default = S.color2,
+    Callback = function(color) S.color2 = color end
+})
+Colors:AddColorPicker("crosshair_outline_color", {
+    Text = "Outline Color", Default = S.outlineColor,
+    Callback = function(color) S.outlineColor = color end
+})
+
+local camera = workspace.CurrentCamera
+local viewport = camera.ViewportSize
+local currentX, currentY = viewport.X / 2, viewport.Y / 2
+local lastTime = os.clock()
+
+task.spawn(function()
+    while S.running do
+        local now = os.clock()
+        local dt = clamp(now - lastTime, 0, 0.1)
+        lastTime = now
+
+        local okViewport, newViewport = pcall(function() return workspace.CurrentCamera.ViewportSize end)
+        if okViewport and newViewport then viewport = newViewport end
+        local targetX = S.followMouse and Mouse.X or viewport.X / 2
+        local targetY = S.followMouse and Mouse.Y or viewport.Y / 2
+
+        if S.smoothFollow then
+            local alpha = clamp(dt * S.followSpeed, 0, 1)
+            currentX = currentX + (targetX - currentX) * alpha
+            currentY = currentY + (targetY - currentY) * alpha
+        else
+            currentX, currentY = targetX, targetY
+        end
+
+        local angle = S.spin and math.rad(now * S.spinSpeed) or 0
+        local pulseScale = 1
+        if S.pulse then pulseScale = 1 + math.sin(now * S.pulseSpeed * math.pi * 2) * S.pulseAmount end
+        local armSize = math.max(1, S.size * pulseScale)
+
+        for index, arm in ipairs(arms) do
+            local armAngle = angle + (index - 1) * math.pi / 2
+            local dx, dy = math.cos(armAngle), math.sin(armAngle)
+            local startDistance = S.gap
+            local endDistance = S.gap + armSize
+            local capExtension = math.max(2, (S.thickness + 2) * 0.6)
+            arm.outline.From = Vector2.new(currentX + dx * (startDistance - capExtension), currentY + dy * (startDistance - capExtension))
+            arm.outline.To = Vector2.new(currentX + dx * (endDistance + capExtension), currentY + dy * (endDistance + capExtension))
+            arm.outline.Thickness = S.thickness + 2
+            arm.outline.Color = S.outlineColor
+            arm.outline.Transparency = S.opacity
+            arm.outline.Visible = S.enabled and S.outline
+
+            local quality = math.max(4, math.min(MAX_SEGMENTS, math.floor(S.gradientQuality + 0.5)))
+            for segmentIndex, segmentLine in ipairs(arm.segments) do
+                if segmentIndex <= quality then
+                    local t0 = (segmentIndex - 1) / quality
+                    local t1 = segmentIndex / quality
+                    local d0 = startDistance + armSize * t0
+                    local d1 = startDistance + armSize * t1 + 0.35
+                    segmentLine.From = Vector2.new(currentX + dx * d0, currentY + dy * d0)
+                    segmentLine.To = Vector2.new(currentX + dx * d1, currentY + dy * d1)
+                    segmentLine.Thickness = S.thickness
+
+                    local movingPhase = (t0 + now * S.gradientSpeed * 0.18 + (index - 1) * 0.25) % 1
+                    if S.rainbow then
+                        segmentLine.Color = hsvColor(movingPhase)
+                    elseif S.gradient then
+                        local blend = (math.sin(movingPhase * math.pi * 2) + 1) / 2
+                        segmentLine.Color = lerpColor(S.color1, S.color2, blend)
+                    else
+                        segmentLine.Color = S.color1
+                    end
+                    segmentLine.Transparency = S.opacity
+                    segmentLine.Visible = S.enabled
+                else
+                    segmentLine.Visible = false
+                end
+            end
+        end
+
+        local dotColor = S.rainbow and hsvColor(now * S.gradientSpeed * 0.15) or S.color1
+        dotOutline.Position = Vector2.new(currentX, currentY)
+        dotOutline.Radius = math.max(2, S.thickness + 2)
+        dotOutline.Color = S.outlineColor
+        dotOutline.Transparency = S.opacity
+        dotOutline.Visible = S.enabled and S.dot and S.outline
+        dot.Position = Vector2.new(currentX, currentY)
+        dot.Radius = math.max(1, S.thickness)
+        dot.Color = dotColor
+        dot.Transparency = S.opacity
+        dot.Visible = S.enabled and S.dot
+
+        if S.everyFrame then
+            task.wait()
+        else
+            task.wait(1 / math.max(10, S.targetFPS))
+        end
+    end
+end)
+
+notify("Animated crosshair loaded. F6 toggles it.", "laced.club", 3)
