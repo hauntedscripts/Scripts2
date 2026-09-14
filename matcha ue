@@ -158,7 +158,7 @@ local Library = {
     Black = Color3.new(0, 0, 0),
     FontSize = 13,
     Toggled = true,
-    ToggleKey = 0x23,
+    ToggleKey = nil,
     Windows = {},
     KeyPickerList = {},
     Signals = {},
@@ -1938,12 +1938,12 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
 
     local controls = tab:AddRightGroupbox("Controls")
     local menuPicker = controls:AddKeyPicker("UESettingsMenuKey" .. suffix, {
-        Text = "Show / Hide UI", Default = "End", Mode = "Toggle",
+        Text = "Show / Hide UI", Default = "None", Mode = "Toggle",
         Callback = function(pressed) if pressed then self:Toggle() end end
     })
     menuPicker.IsMenuKey = true
     local panicPicker = controls:AddKeyPicker("UESettingsPanicKey" .. suffix, {
-        Text = "Panic Key", Default = "Delete", Mode = "Toggle",
+        Text = "Panic Key", Default = "None", Mode = "Toggle",
         Callback = function(pressed)
             if not pressed then return end
             for _, toggle in pairs(Toggles) do
