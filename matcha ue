@@ -864,7 +864,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.InnerBorder.Size = Vector2.new(width - 2, ui(18))
         pack.InnerBorder.Visible = true
         pack.Text.Text = control.Text or "Button"
-        pack.Text.Position = Vector2.new(x + width / 2, y + ui(7) + TEXT_Y_OFFSET)
+        pack.Text.Position = Vector2.new(x + width / 2, y + ui(7) + TEXT_Y_OFFSET + 2)
         pack.Text.Visible = true
 
     elseif control.Type == "Toggle" then
@@ -881,7 +881,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Fill.Visible = control.Value == true
         pack.Text.Text = control.Text or control.Id
         pack.Text.Color = control.Risky and Library.RiskColor or Library.FontColor
-        pack.Text.Position = Vector2.new(x + ui(20), y + ui(2) + TEXT_Y_OFFSET)
+        pack.Text.Position = Vector2.new(x + ui(20), y + ui(2) + TEXT_Y_OFFSET + 2)
         pack.Text.Visible = true
 
         local picker = control.InlineKeyPicker
@@ -916,7 +916,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Text.Position = Vector2.new(x, y + TEXT_Y_OFFSET)
         pack.Text.Visible = true
         pack.Value.Text = tostring(control.Value) .. tostring(control.Suffix or "")
-        pack.Value.Position = Vector2.new(x + width - 30, y + 1 + TEXT_Y_OFFSET)
+        pack.Value.Position = Vector2.new(x + width - 30, y + 1 + TEXT_Y_OFFSET + 2)
         pack.Value.Visible = true
         pack.Bar.Position = Vector2.new(x, y + ui(20))
         pack.Bar.Size = Vector2.new(width, ui(13))
@@ -974,14 +974,16 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Text.Text = control.Text or control.Id
         pack.Text.Position = Vector2.new(x, y + 2 + TEXT_Y_OFFSET)
         pack.Text.Visible = true
-        pack.Swatch.Position = Vector2.new(x + width - ui(38), y + ui(2))
-        pack.Swatch.Size = Vector2.new(ui(38), ui(16))
+        local swatchX = x + width - ui(38)
+        local swatchY = y + ui(4)
+        pack.Swatch.Position = Vector2.new(swatchX + 1, swatchY + 1)
+        pack.Swatch.Size = Vector2.new(ui(38) - 2, ui(16) - 2)
         pack.Swatch.Color = control.Value
         pack.Swatch.Visible = true
-        pack.Border.Position = Vector2.new(x + width - ui(38), y + ui(2))
+        pack.Border.Position = Vector2.new(swatchX, swatchY)
         pack.Border.Size = Vector2.new(ui(38), ui(16))
         pack.Border.Visible = true
-        control._boxRect = { x = x + width - ui(38), y = y + ui(2), w = ui(38), h = ui(16) }
+        control._boxRect = { x = swatchX, y = swatchY, w = ui(38), h = ui(16) }
     end
 
     return y + height
@@ -1274,7 +1276,7 @@ function WindowMethods:_renderColorPickerOverlay(control)
             row.Box.Size = Vector2.new(boxRect.w, boxRect.h)
             row.BoxBorder.Position = Vector2.new(boxRect.x, boxRect.y)
             row.BoxBorder.Size = Vector2.new(boxRect.w, boxRect.h)
-            row.Value.Position = Vector2.new(boxRect.x + boxRect.w / 2, boxRect.y + 4 + TEXT_Y_OFFSET)
+            row.Value.Position = Vector2.new(boxRect.x + boxRect.w / 2, boxRect.y + 4 + TEXT_Y_OFFSET + 2)
             row.Bar.Position = Vector2.new(barRect.x, barRect.y)
             row.Bar.Size = Vector2.new(barRect.w, barRect.h)
             row.Fill.Position = Vector2.new(barRect.x + 1, barRect.y + 1)
@@ -1351,7 +1353,7 @@ function WindowMethods:_render()
     frame.Header.Size = Vector2.new(size.X - 2, ui(24))
     frame.Header.Visible = true
     frame.Border.Position = position
-    frame.Border.Size = size
+    frame.Border.Size = Vector2.new(size.X, size.Y - 1)
     frame.Border.Visible = true
     frame.InnerBorder.Position = Vector2.new(position.X + 1, position.Y + 1)
     frame.InnerBorder.Size = Vector2.new(size.X - 2, size.Y - 2)
