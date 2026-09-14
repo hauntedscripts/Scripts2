@@ -156,7 +156,11 @@ local Library = {
     Signals = {},
     UnloadCallbacks = {},
     _drawings = {},
+    _accentDrawings = {},
     _unloaded = false,
+    RainbowEnabled = false,
+    RainbowSpeed = 0.18,
+    StaticAccentColor = Color3.fromRGB(0, 85, 255),
     NotifyConfig = { Alignment = "Left", BarSide = "Left", PositionX = 0, PositionY = 40 }
 }
 Library.Toggles = Toggles
@@ -167,6 +171,12 @@ local function drawing(drawType, properties, owner)
     for key, value in pairs(properties or {}) do object[key] = value end
     object.Visible = false
     table.insert(Library._drawings, object)
+    local initialColor = properties and properties.Color
+    if initialColor and math.abs(initialColor.R - Library.AccentColor.R) < 0.0001
+        and math.abs(initialColor.G - Library.AccentColor.G) < 0.0001
+        and math.abs(initialColor.B - Library.AccentColor.B) < 0.0001 then
+        table.insert(Library._accentDrawings, object)
+    end
     if owner then table.insert(owner._drawings, object) end
     return object
 end
@@ -195,6 +205,14 @@ end
 
 function Library:SetFontSize(size)
     if type(size) == "number" and size > 0 then self.FontSize = size end
+end
+
+function Library:SetAccentColor(color)
+    if not color then return end
+    self.AccentColor = color
+    for _, object in ipairs(self._accentDrawings) do
+        pcall(function() object.Color = color end)
+    end
 end
 
 function Library:GetDarkerColor(color)
@@ -1593,6 +1611,9 @@ end
 
 function WindowMethods:Step()
     if self.Destroyed or Library._unloaded then return end
+    if Library.RainbowEnabled then
+        Library:SetAccentColor(hsvToRgb((os.clock() * Library.RainbowSpeed) % 1, 0.9, 1))
+    end
     self:_render()
 
     local mousePosition = self.MousePosition or Vector2.new(Mouse.X, Mouse.Y)
@@ -1715,14 +1736,96 @@ function WindowMethods:SetWindowTitle(title)
 end
 
 function WindowMethods:AddTab(name)
+    name = tostring(name or ("Tab " .. tostring(#self.TabList + 1)))
+    if name == "Settings" and self._settingsTab then return self._settingsTab end
     local tab = setmetatable({
-        Name = tostring(name or ("Tab " .. tostring(#self.TabList + 1))),
+        Name = name,
         Window = self, Groups = {}, Groupboxes = {}, Tabboxes = {}, TabboxesList = {},
         LayoutOrder = #self.TabList + 1
     }, TabMethods)
-    table.insert(self.TabList, tab)
+    if self._settingsTab and not self._creatingSettings then
+        table.insert(self.TabList, #self.TabList, tab)
+        self._hasUserTab = true
+        if self.ActiveTab == self._settingsTab then self.ActiveTab = tab end
+    else
+        table.insert(self.TabList, tab)
+    end
+    for index, listedTab in ipairs(self.TabList) do listedTab.LayoutOrder = index end
     self.Tabs[tab.Name] = tab
     if not self.ActiveTab then self.ActiveTab = tab end
+    return tab
+end
+
+function WindowMethods:_centerOnScreen()
+    pcall(function()
+        local viewport = workspace.CurrentCamera.ViewportSize
+        self.Position = Vector2.new((viewport.X - self.Size.X) / 2, (viewport.Y - self.Size.Y) / 2)
+    end)
+    return self
+end
+
+function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
+    self._creatingSettings = true
+    local tab = self:AddTab("Settings")
+    self._creatingSettings = false
+    self._settingsTab = tab
+
+    local suffix = tostring(#Library.Windows + 1)
+    local appearance = tab:AddLeftGroupbox("Appearance")
+    appearance:AddColorPicker("UESettingsAccent" .. suffix, {
+        Text = "Accent Color",
+        Default = Library.StaticAccentColor,
+        Callback = function(color)
+            Library.StaticAccentColor = color
+            if not Library.RainbowEnabled then Library:SetAccentColor(color) end
+            self._visibilityDirty = true
+        end
+    })
+    appearance:AddToggle("UESettingsRainbow" .. suffix, {
+        Text = "Rainbow Mode",
+        Default = Library.RainbowEnabled,
+        Callback = function(value)
+            Library.RainbowEnabled = value
+            if not value then Library:SetAccentColor(Library.StaticAccentColor) end
+            self._visibilityDirty = true
+        end
+    })
+    appearance:AddSlider("UESettingsRainbowSpeed" .. suffix, {
+        Text = "Rainbow Speed", Min = 0.03, Max = 1, Default = Library.RainbowSpeed,
+        Rounding = 2, Callback = function(value) Library.RainbowSpeed = value end
+    })
+
+    local sizing = tab:AddRightGroupbox("Window")
+    sizing:AddSlider("UESettingsWidth" .. suffix, {
+        Text = "Width", Min = 380, Max = 1000, Default = defaultWidth,
+        Rounding = 0, Suffix = " px", Callback = function(value)
+            self.Size = Vector2.new(value, self.Size.Y)
+            self._visibilityDirty = true
+        end
+    })
+    sizing:AddSlider("UESettingsHeight" .. suffix, {
+        Text = "Height", Min = 300, Max = 1000, Default = defaultHeight,
+        Rounding = 0, Suffix = " px", Callback = function(value)
+            self.Size = Vector2.new(self.Size.X, value)
+            self._visibilityDirty = true
+        end
+    })
+    sizing:AddButton({ Text = "Center Window", Func = function() self:_centerOnScreen() end })
+    sizing:AddButton({ Text = "Reset Size", Func = function()
+        self.Size = Vector2.new(defaultWidth, defaultHeight)
+        Options["UESettingsWidth" .. suffix]:SetValue(defaultWidth)
+        Options["UESettingsHeight" .. suffix]:SetValue(defaultHeight)
+        self:_centerOnScreen()
+        self._visibilityDirty = true
+    end })
+
+    local controls = tab:AddRightGroupbox("Controls")
+    controls:AddKeyPicker("UESettingsMenuKey" .. suffix, {
+        Text = "Show / Hide UI", Default = "End", Mode = "Toggle",
+        Callback = function(pressed) if pressed then self:Toggle() end end
+    })
+    controls:AddButton({ Text = "Unload UI", Func = function() Library:Unload() end })
+
     return tab
 end
 
@@ -1795,6 +1898,7 @@ function Library:CreateWindow(...)
 
     table.insert(self.Windows, window)
     self.Toggled = window.Visible
+    window:_buildSettingsTab(width, height)
 
     task.spawn(function()
         while not Library._unloaded and not window.Destroyed do
