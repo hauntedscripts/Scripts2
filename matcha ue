@@ -2104,7 +2104,9 @@ function Library:CreateWindow(...)
 
     table.insert(self.Windows, window)
     self.Toggled = window.Visible
-    window:_buildSettingsTab(width, height)
+    if info.SettingsTab ~= false and info.BuiltInSettings ~= false then
+        window:_buildSettingsTab(width, height)
+    end
 
     task.spawn(function()
         while not Library._unloaded and not window.Destroyed do
