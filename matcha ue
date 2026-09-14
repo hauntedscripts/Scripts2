@@ -1586,9 +1586,21 @@ function WindowMethods:_updateInputCapture()
 end
 
 function WindowMethods:_updateKeyPickers()
+    local reservedMenuCode = nil
+    for _, picker in ipairs(Library.KeyPickerList) do
+        if picker.Window == self and picker.IsMenuKey then
+            reservedMenuCode = keyCode(picker.Value)
+            break
+        end
+    end
     for _, picker in ipairs(Library.KeyPickerList) do
         if picker.Window == self and picker ~= self.CaptureKey then
             local state = picker:GetState()
+            -- The menu key is reserved. A feature bound to the same key must not
+            -- fire when the user only intends to hide or show the interface.
+            if reservedMenuCode and not picker.IsMenuKey and keyCode(picker.Value) == reservedMenuCode then
+                picker.LastState = state
+            else
             if picker.Mode == "Always" then state = true end
 
             if picker.Mode == "Hold" then
@@ -1606,6 +1618,7 @@ function WindowMethods:_updateKeyPickers()
                 safeCallback(picker.Callback, true)
             end
             picker.LastState = state
+            end
         end
     end
 end
@@ -1821,10 +1834,11 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
     end })
 
     local controls = tab:AddRightGroupbox("Controls")
-    controls:AddKeyPicker("UESettingsMenuKey" .. suffix, {
+    local menuPicker = controls:AddKeyPicker("UESettingsMenuKey" .. suffix, {
         Text = "Show / Hide UI", Default = "End", Mode = "Toggle",
         Callback = function(pressed) if pressed then self:Toggle() end end
     })
+    menuPicker.IsMenuKey = true
     controls:AddButton({ Text = "Unload UI", Func = function() Library:Unload() end })
 
     return tab
@@ -1839,11 +1853,21 @@ end
 
 function WindowMethods:Hide()
     self.Visible = false
+    self.OpenDropdown = nil
+    self.OpenColorPicker = nil
+    self.ColorInput = nil
+    self.ColorDrag = nil
+    self.SliderDrag = nil
     return self
 end
 
 function WindowMethods:Toggle()
     self.Visible = not self.Visible
+    self.OpenDropdown = nil
+    self.OpenColorPicker = nil
+    self.ColorInput = nil
+    self.ColorDrag = nil
+    self.SliderDrag = nil
     if self.Visible then self._visibilityDirty = true end
     return self.Visible
 end
