@@ -165,6 +165,7 @@ local Library = {
     UnloadCallbacks = {},
     _drawings = {},
     _accentDrawings = {},
+    _themeDrawings = {},
     _unloaded = false,
     RainbowEnabled = false,
     RainbowSpeed = 0.18,
@@ -189,10 +190,26 @@ local function drawing(drawType, properties, owner)
     object.Transparency = Library.UIOpacity
     table.insert(Library._drawings, object)
     local initialColor = properties and properties.Color
-    if initialColor and math.abs(initialColor.R - Library.AccentColor.R) < 0.0001
-        and math.abs(initialColor.G - Library.AccentColor.G) < 0.0001
-        and math.abs(initialColor.B - Library.AccentColor.B) < 0.0001 then
-        table.insert(Library._accentDrawings, object)
+    if initialColor then
+        local themeFields = {
+            "BackgroundColor", "MainColor", "OutlineColor", "FontColor",
+            "GradientTopColor", "GradientBottomColor"
+        }
+        for _, field in ipairs(themeFields) do
+            local fc = Library[field]
+            if fc and math.abs(initialColor.R - fc.R) < 0.0001
+                and math.abs(initialColor.G - fc.G) < 0.0001
+                and math.abs(initialColor.B - fc.B) < 0.0001 then
+                if not Library._themeDrawings[field] then Library._themeDrawings[field] = {} end
+                table.insert(Library._themeDrawings[field], object)
+                break
+            end
+        end
+        if math.abs(initialColor.R - Library.AccentColor.R) < 0.0001
+            and math.abs(initialColor.G - Library.AccentColor.G) < 0.0001
+            and math.abs(initialColor.B - Library.AccentColor.B) < 0.0001 then
+            table.insert(Library._accentDrawings, object)
+        end
     end
     if owner then table.insert(owner._drawings, object) end
     return object
@@ -238,15 +255,12 @@ function Library:SetOpacity(value)
 end
 
 function Library:SetThemeColor(field, color)
-    local old = self[field]
-    if not old or not color then return end
-    for _, object in ipairs(self._drawings) do
-        pcall(function()
-            local current = object.Color
-            if current and math.abs(current.R - old.R) < 0.0001 and math.abs(current.G - old.G) < 0.0001 and math.abs(current.B - old.B) < 0.0001 then
-                object.Color = color
-            end
-        end)
+    if not field or not color then return end
+    local tagged = self._themeDrawings[field]
+    if tagged then
+        for _, object in ipairs(tagged) do
+            pcall(function() object.Color = color end)
+        end
     end
     self[field] = color
 end
