@@ -38,7 +38,7 @@ end
 
 local UI_SCALE = 0.92
 local TEXT_Y_OFFSET = 4
-local TAB_TEXT_Y_OFFSET = 5
+local TAB_TEXT_Y_OFFSET = 4
 
 local function ui(value)
     return math.max(1, math.floor(value * UI_SCALE + 0.5))
@@ -699,7 +699,8 @@ function WindowMethods:_ensureFrame()
         InnerBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 }),
         Accent = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 6 }),
         Title = self:_draw("Text", { Text = self.Title, Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 7 }),
-        TabLine = self:_draw("Line", { Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 })
+        TabLine = self:_draw("Line", { Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 }),
+        DragWireframe = self:_draw("Square", { Filled = false, Thickness = 2, Color = Library.AccentColor, ZIndex = 60 })
     }
 end
 
@@ -1295,6 +1296,13 @@ function WindowMethods:_render()
     frame.TabLine.From = Vector2.new(position.X + 1, position.Y + ui(48))
     frame.TabLine.To = Vector2.new(position.X + size.X - 1, position.Y + ui(48))
     frame.TabLine.Visible = true
+    if self.Dragging and self.DragPreviewPosition then
+        frame.DragWireframe.Position = self.DragPreviewPosition
+        frame.DragWireframe.Size = size
+        frame.DragWireframe.Visible = true
+    else
+        frame.DragWireframe.Visible = false
+    end
 
     self._headerRect = { x = position.X, y = position.Y, w = size.X, h = ui(24) }
     local tabCount = #self.TabList
@@ -1657,9 +1665,13 @@ function WindowMethods:Step()
         if mouseDown then
             local dx = mousePosition.X - self.DragStartMouse.X
             local dy = mousePosition.Y - self.DragStartMouse.Y
-            self.Position = Vector2.new(self.DragStartPosition.X + dx, self.DragStartPosition.Y + dy)
+            self.DragPreviewPosition = Vector2.new(self.DragStartPosition.X + dx, self.DragStartPosition.Y + dy)
         else
+            if self.DragPreviewPosition then self.Position = self.DragPreviewPosition end
             self.Dragging = false
+            self.DragPreviewPosition = nil
+            if self.Frame and self.Frame.DragWireframe then self.Frame.DragWireframe.Visible = false end
+            self._visibilityDirty = true
         end
     end
 
@@ -1738,6 +1750,7 @@ function WindowMethods:Step()
             self.Dragging = true
             self.DragStartMouse = mousePosition
             self.DragStartPosition = self.Position
+            self.DragPreviewPosition = self.Position
         end
     end
 
