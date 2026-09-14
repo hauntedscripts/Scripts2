@@ -1758,7 +1758,7 @@ function Library:CreateWindow(...)
         info = { Title = tostring(first or "UE Matcha") }
     end
 
-    local width, height = 620, 1000
+    local width, height = 620, 1040
     if info.Size then
         pcall(function()
             width = info.Size.X
