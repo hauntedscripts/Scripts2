@@ -38,7 +38,7 @@ end
 
 local UI_SCALE = 0.92
 local TEXT_Y_OFFSET = 4
-local TAB_TEXT_Y_OFFSET = 2
+local TAB_TEXT_Y_OFFSET = 5
 
 local function ui(value)
     return math.max(1, math.floor(value * UI_SCALE + 0.5))
