@@ -1,3 +1,5 @@
+-- laced.club | Animated Crosshair for Matcha
+
 local UE_URL = "https://raw.githubusercontent.com/hauntedscripts/Scripts2/refs/heads/main/matcha%20ue"
 
 local Players = game:GetService("Players")
@@ -37,6 +39,16 @@ local S = {
     everyFrame = true,
     targetFPS = 60,
     gradientQuality = 32,
+    horizontalSize = 28,
+    verticalSize = 28,
+    outlineThickness = 1,
+    sideOutlineThickness = 1,
+    capOutlineThickness = 1,
+    shape = "Lines",
+    gradientDirection = "Outward",
+    colorStop = 0.5,
+    glow = false,
+    glowIntensity = 0.5,
     color1 = Color3.fromRGB(0, 170, 255),
     color2 = Color3.fromRGB(210, 70, 255),
     outlineColor = Color3.fromRGB(0, 0, 0),
@@ -58,11 +70,30 @@ end
 for index = 1, 4 do
     arms[index] = {
         outline = make("Line", { Thickness = 4, Color = S.outlineColor, ZIndex = 20 }),
+        outlineSecond = make("Line", { Thickness = 4, Color = S.outlineColor, ZIndex = 20 }),
+        lowerOutline = make("Line", { Thickness = 1, Color = S.outlineColor, ZIndex = 20 }),
+        lowerOutlineSecond = make("Line", { Thickness = 1, Color = S.outlineColor, ZIndex = 20 }),
+        startCap = make("Line", { Thickness = 1, Color = S.outlineColor, ZIndex = 20 }),
+        endCap = make("Line", { Thickness = 1, Color = S.outlineColor, ZIndex = 20 }),
+        glowWide = make("Line", { Thickness = 10, Color = S.color1, ZIndex = 18 }),
+        glowNear = make("Line", { Thickness = 6, Color = S.color1, ZIndex = 19 }),
+        glowWideSecond = make("Line", { Thickness = 10, Color = S.color1, ZIndex = 18 }),
+        glowNearSecond = make("Line", { Thickness = 6, Color = S.color1, ZIndex = 19 }),
         segments = {}
     }
     for segment = 1, MAX_SEGMENTS do
         arms[index].segments[segment] = make("Line", { Thickness = S.thickness, Color = S.color1, ZIndex = 21 })
     end
+end
+
+local ring = {}
+local RING_SEGMENTS = 96
+for index = 1, RING_SEGMENTS do
+    ring[index] = {
+        outline = make("Line", { Thickness = 4, Color = S.outlineColor, ZIndex = 20 }),
+        glow = make("Line", { Thickness = 9, Color = S.color1, ZIndex = 18 }),
+        line = make("Line", { Thickness = 2, Color = S.color1, ZIndex = 21 })
+    }
 end
 
 local dotOutline = make("Circle", {
@@ -111,6 +142,23 @@ local function hsvColor(hue)
     return Color3.new(1, 0, q)
 end
 
+local function gradientColor(t, index, now)
+    if not S.gradient and not S.rainbow then return S.color1 end
+    if S.gradientDirection == "Inward" then
+        t = 1 - t
+    elseif S.gradientDirection == "Clockwise" then
+        t = (index - 1) / 4 + t / 4
+    elseif S.gradientDirection == "Counterclockwise" then
+        t = 1 - ((index - 1) / 4 + t / 4)
+    end
+    local phase = (t + now * S.gradientSpeed * 0.18) % 1
+    if S.rainbow then return hsvColor(phase) end
+    local stop = clamp(S.colorStop, 0.05, 0.95)
+    local blend
+    if phase <= stop then blend = phase / stop else blend = (1 - phase) / (1 - stop) end
+    return lerpColor(S.color1, S.color2, clamp(blend, 0, 1))
+end
+
 local Window = Library:CreateWindow({
     Title = "laced.club | Crosshair",
     Width = 540,
@@ -118,12 +166,16 @@ local Window = Library:CreateWindow({
     AutoShow = true,
     Center = true
 })
+-- UE only creates its built-in Settings tab for a normal (AutoShow) window.
+-- Hide immediately while user tabs and controls are assembled.
+Window:Hide()
 
 local Main = Window:AddTab("Crosshair")
+local Presets = Window:AddTab("Presets")
 local General = Main:AddLeftGroupbox("General")
 local Effects = Main:AddRightGroupbox("Animation")
 local Shape = Main:AddLeftGroupbox("Shape")
-local Colors = Main:AddRightGroupbox("Colors")
+local Colors = Presets:AddRightGroupbox("Colors")
 
 General:AddToggleWithKeybind("crosshair_enabled", "crosshair_key", {
     Text = "Crosshair Enabled", Default = true, DefaultKey = "F6",
@@ -194,7 +246,24 @@ Effects:AddSlider("crosshair_target_fps", {
 
 Shape:AddSlider("crosshair_size", {
     Text = "Size", Min = 1, Max = 300, Default = 28,
-    Rounding = 0, Suffix = " px", Callback = function(value) S.size = value end
+    Rounding = 0, Suffix = " px", Callback = function(value)
+        S.size = value
+        S.horizontalSize, S.verticalSize = value, value
+        Library.Options.crosshair_horizontal_size:SetValue(value)
+        Library.Options.crosshair_vertical_size:SetValue(value)
+    end
+})
+Shape:AddSlider("crosshair_horizontal_size", {
+    Text = "Horizontal Arm Size", Min = 1, Max = 300, Default = 28,
+    Rounding = 0, Suffix = " px", Callback = function(value) S.horizontalSize = value end
+})
+Shape:AddSlider("crosshair_vertical_size", {
+    Text = "Vertical Arm Size", Min = 1, Max = 300, Default = 28,
+    Rounding = 0, Suffix = " px", Callback = function(value) S.verticalSize = value end
+})
+Shape:AddDropdown("crosshair_shape", {
+    Text = "Shape", Values = { "Lines", "Chevrons", "Circle", "X" }, Default = "Lines",
+    Callback = function(value) S.shape = value end
 })
 Shape:AddSlider("crosshair_gap", {
     Text = "Center Gap", Min = 0, Max = 150, Default = 7,
@@ -219,6 +288,7 @@ Shape:AddButton({ Text = "Reset Crosshair", Func = function()
     Library.Options.crosshair_size:SetValue(28)
     Library.Options.crosshair_gap:SetValue(7)
     Library.Options.crosshair_thickness:SetValue(2)
+    Library.Options.crosshair_outline_thickness:SetValue(1)
     Library.Options.crosshair_spin_speed:SetValue(110)
     Library.Options.crosshair_gradient_speed:SetValue(1.5)
     Library.Options.crosshair_pulse_speed:SetValue(2)
@@ -238,11 +308,101 @@ Colors:AddColorPicker("crosshair_outline_color", {
     Text = "Outline Color", Default = S.outlineColor,
     Callback = function(color) S.outlineColor = color end
 })
+Colors:AddDropdown("crosshair_gradient_direction", {
+    Text = "Gradient Direction",
+    Values = { "Outward", "Inward", "Clockwise", "Counterclockwise" },
+    Default = "Outward", Callback = function(value) S.gradientDirection = value end
+})
+Colors:AddSlider("crosshair_color_stop", {
+    Text = "Secondary Color Stop", Min = 0.05, Max = 0.95, Default = 0.5,
+    Rounding = 2, Callback = function(value) S.colorStop = value end
+})
+Colors:AddToggle("crosshair_glow", {
+    Text = "Glow Layers", Default = false,
+    Callback = function(value) S.glow = value end
+})
+Colors:AddSlider("crosshair_glow_intensity", {
+    Text = "Glow Intensity", Min = 0.1, Max = 1, Default = 0.5,
+    Rounding = 2, Callback = function(value) S.glowIntensity = value end
+})
+
+local presetBox = Presets:AddLeftGroupbox("Crosshair Presets")
+local outlineBox = Presets:AddRightGroupbox("Outline Edges")
+outlineBox:AddSlider("crosshair_outline_thickness", {
+    Text = "All Outlines", Min = 0, Max = 15, Default = 1,
+    Rounding = 0, Suffix = " px", Callback = function(value)
+        S.outlineThickness = value
+        S.sideOutlineThickness, S.capOutlineThickness = value, value
+        if Library.Options.crosshair_side_outline then Library.Options.crosshair_side_outline:SetValue(value) end
+        if Library.Options.crosshair_cap_outline then Library.Options.crosshair_cap_outline:SetValue(value) end
+    end
+})
+outlineBox:AddSlider("crosshair_side_outline", {
+    Text = "Sides (Yellow)", Min = 0, Max = 15, Default = 1,
+    Rounding = 0, Suffix = " px", Callback = function(value) S.sideOutlineThickness = value end
+})
+outlineBox:AddSlider("crosshair_cap_outline", {
+    Text = "Ends (Red)", Min = 0, Max = 15, Default = 1,
+    Rounding = 0, Suffix = " px", Callback = function(value) S.capOutlineThickness = value end
+})
+local function setOption(id, value)
+    local option = Library.Options[id]
+    if option then option:SetValue(value) end
+end
+local function setToggle(id, value)
+    local toggle = Library.Toggles[id]
+    if toggle then toggle:SetValue(value) end
+end
+local function applyPreset(name)
+    local presets = {
+        Classic = { shape="Lines", h=18, v=18, gap=5, thickness=2, dot=true, spin=false, gradient=false, rainbow=false, pulse=false, glow=false },
+        ["Tiny Dot"] = { shape="Circle", h=2, v=2, gap=0, thickness=1, dot=true, spin=false, gradient=false, rainbow=false, pulse=false, glow=false },
+        Sniper = { shape="Lines", h=62, v=42, gap=12, thickness=1, dot=true, spin=false, gradient=false, rainbow=false, pulse=false, glow=false },
+        Neon = { shape="X", h=34, v=34, gap=7, thickness=3, dot=true, spin=false, gradient=true, rainbow=false, pulse=false, glow=true },
+        Animated = { shape="Chevrons", h=38, v=38, gap=9, thickness=2, dot=true, spin=true, gradient=true, rainbow=true, pulse=true, glow=true }
+    }
+    local p = presets[name]
+    if not p then return end
+    setOption("crosshair_size", math.max(p.h, p.v))
+    setOption("crosshair_shape", p.shape)
+    setOption("crosshair_horizontal_size", p.h)
+    setOption("crosshair_vertical_size", p.v)
+    setOption("crosshair_gap", p.gap)
+    setOption("crosshair_thickness", p.thickness)
+    setOption("crosshair_outline_thickness", 1)
+    setToggle("crosshair_dot", p.dot)
+    setToggle("crosshair_spin", p.spin)
+    setToggle("crosshair_gradient", p.gradient)
+    setToggle("crosshair_rainbow", p.rainbow)
+    setToggle("crosshair_pulse", p.pulse)
+    setToggle("crosshair_glow", p.glow)
+end
+for _, name in ipairs({ "Classic", "Tiny Dot", "Sniper", "Neon", "Animated" }) do
+    local presetName = name
+    presetBox:AddButton({ Text = presetName, Func = function() applyPreset(presetName) end })
+end
+
+-- Build every tab before the first visible UE render. Showing early leaves
+-- stale controls from inactive tabs visible until a drag forces a redraw.
+Window:Show()
 
 local camera = workspace.CurrentCamera
 local viewport = camera.ViewportSize
 local currentX, currentY = viewport.X / 2, viewport.Y / 2
 local lastTime = os.clock()
+
+local function layoutEdge(line, from, to, side, width, fillWidth, visible, color, opacity)
+    local vx, vy = to.X - from.X, to.Y - from.Y
+    local length = math.sqrt(vx * vx + vy * vy)
+    local nx, ny = -vy / math.max(length, 0.001), vx / math.max(length, 0.001)
+    local offset = side * (fillWidth / 2 + width / 2)
+    line.From = Vector2.new(from.X + nx * offset, from.Y + ny * offset)
+    line.To = Vector2.new(to.X + nx * offset, to.Y + ny * offset)
+    line.Thickness = math.max(1, width)
+    line.Color, line.Transparency = color, opacity
+    line.Visible = visible and width > 0
+    return nx, ny
+end
 
 task.spawn(function()
     while S.running do
@@ -266,41 +426,71 @@ task.spawn(function()
         local angle = S.spin and math.rad(now * S.spinSpeed) or 0
         local pulseScale = 1
         if S.pulse then pulseScale = 1 + math.sin(now * S.pulseSpeed * math.pi * 2) * S.pulseAmount end
-        local armSize = math.max(1, S.size * pulseScale)
+        local circleShape = S.shape == "Circle"
 
         for index, arm in ipairs(arms) do
-            local armAngle = angle + (index - 1) * math.pi / 2
+            local baseAngle = S.shape == "X" and math.pi / 4 or 0
+            local armAngle = angle + baseAngle + (index - 1) * math.pi / 2
             local dx, dy = math.cos(armAngle), math.sin(armAngle)
             local startDistance = S.gap
+            local baseSize = (index % 2 == 1) and S.horizontalSize or S.verticalSize
+            local armSize = math.max(1, baseSize * pulseScale)
             local endDistance = S.gap + armSize
-            local capExtension = math.max(2, (S.thickness + 2) * 0.6)
-            arm.outline.From = Vector2.new(currentX + dx * (startDistance - capExtension), currentY + dy * (startDistance - capExtension))
-            arm.outline.To = Vector2.new(currentX + dx * (endDistance + capExtension), currentY + dy * (endDistance + capExtension))
-            arm.outline.Thickness = S.thickness + 2
-            arm.outline.Color = S.outlineColor
-            arm.outline.Transparency = S.opacity
-            arm.outline.Visible = S.enabled and S.outline
+            local startPoint = Vector2.new(currentX + dx * startDistance, currentY + dy * startDistance)
+            local endPoint = Vector2.new(currentX + dx * endDistance, currentY + dy * endDistance)
+            local chevron = S.shape == "Chevrons"
+            local side = index % 2 == 1 and 1 or -1
+            local middleDistance = startDistance + armSize / 2
+            local bend = armSize * 0.22 * side
+            local middlePoint = Vector2.new(currentX + dx * middleDistance - dy * bend, currentY + dy * middleDistance + dx * bend)
+            local outlineVisible = S.enabled and S.outline and not circleShape
+            local firstEnd = chevron and middlePoint or endPoint
+            local sideWidth = S.sideOutlineThickness
+            local nx, ny = layoutEdge(arm.outline, startPoint, firstEnd, -1, sideWidth, S.thickness, outlineVisible, S.outlineColor, S.opacity)
+            layoutEdge(arm.lowerOutline, startPoint, firstEnd, 1, sideWidth, S.thickness, outlineVisible, S.outlineColor, S.opacity)
+            layoutEdge(arm.outlineSecond, middlePoint, endPoint, -1, sideWidth, S.thickness, outlineVisible and chevron, S.outlineColor, S.opacity)
+            layoutEdge(arm.lowerOutlineSecond, middlePoint, endPoint, 1, sideWidth, S.thickness, outlineVisible and chevron, S.outlineColor, S.opacity)
+            local halfCap = S.thickness / 2 + sideWidth
+            arm.startCap.From = Vector2.new(startPoint.X - nx * halfCap, startPoint.Y - ny * halfCap)
+            arm.startCap.To = Vector2.new(startPoint.X + nx * halfCap, startPoint.Y + ny * halfCap)
+            local capDx, capDy = endPoint.X - (chevron and middlePoint.X or startPoint.X), endPoint.Y - (chevron and middlePoint.Y or startPoint.Y)
+            local capLength = math.sqrt(capDx * capDx + capDy * capDy)
+            local endNx, endNy = -capDy / math.max(capLength, 0.001), capDx / math.max(capLength, 0.001)
+            arm.endCap.From = Vector2.new(endPoint.X - endNx * halfCap, endPoint.Y - endNy * halfCap)
+            arm.endCap.To = Vector2.new(endPoint.X + endNx * halfCap, endPoint.Y + endNy * halfCap)
+            for _, cap in ipairs({ arm.startCap, arm.endCap }) do
+                cap.Thickness = math.max(1, S.capOutlineThickness)
+                cap.Color, cap.Transparency = S.outlineColor, S.opacity
+                cap.Visible = outlineVisible and S.capOutlineThickness > 0
+            end
+            for glowIndex, glowLine in ipairs({ arm.glowWide, arm.glowNear, arm.glowWideSecond, arm.glowNearSecond }) do
+                local second = glowIndex > 2
+                glowLine.From, glowLine.To = second and middlePoint or startPoint, (chevron and not second) and middlePoint or endPoint
+                glowLine.Thickness = S.thickness + ((glowIndex % 2 == 1) and 10 or 5)
+                glowLine.Color = gradientColor(0.5, index, now)
+                glowLine.Transparency = S.opacity * S.glowIntensity * ((glowIndex % 2 == 1) and 0.22 or 0.4)
+                glowLine.Visible = S.enabled and S.glow and not circleShape and (not second or chevron)
+            end
 
             local quality = math.max(4, math.min(MAX_SEGMENTS, math.floor(S.gradientQuality + 0.5)))
             for segmentIndex, segmentLine in ipairs(arm.segments) do
-                if segmentIndex <= quality then
+                if segmentIndex <= quality and not circleShape then
                     local t0 = (segmentIndex - 1) / quality
                     local t1 = segmentIndex / quality
                     local d0 = startDistance + armSize * t0
-                    local d1 = startDistance + armSize * t1 + 0.35
-                    segmentLine.From = Vector2.new(currentX + dx * d0, currentY + dy * d0)
-                    segmentLine.To = Vector2.new(currentX + dx * d1, currentY + dy * d1)
-                    segmentLine.Thickness = S.thickness
-
-                    local movingPhase = (t0 + now * S.gradientSpeed * 0.18 + (index - 1) * 0.25) % 1
-                    if S.rainbow then
-                        segmentLine.Color = hsvColor(movingPhase)
-                    elseif S.gradient then
-                        local blend = (math.sin(movingPhase * math.pi * 2) + 1) / 2
-                        segmentLine.Color = lerpColor(S.color1, S.color2, blend)
-                    else
-                        segmentLine.Color = S.color1
+                    -- A tiny overlap hides pixel gaps without creating dark/color bands.
+                    local d1 = startDistance + armSize * t1 + (segmentIndex < quality and 0.08 or 0)
+                    local bend0 = 0
+                    local bend1 = 0
+                    if S.shape == "Chevrons" then
+                        local side = index % 2 == 1 and 1 or -1
+                        bend0 = (1 - math.abs(2 * t0 - 1)) * armSize * 0.22 * side
+                        bend1 = (1 - math.abs(2 * t1 - 1)) * armSize * 0.22 * side
                     end
+                    segmentLine.From = Vector2.new(currentX + dx * d0 - dy * bend0, currentY + dy * d0 + dx * bend0)
+                    segmentLine.To = Vector2.new(currentX + dx * d1 - dy * bend1, currentY + dy * d1 + dx * bend1)
+                    segmentLine.Thickness = S.thickness
+                    segmentLine.Color = gradientColor((t0 + t1) / 2, index, now)
                     segmentLine.Transparency = S.opacity
                     segmentLine.Visible = S.enabled
                 else
@@ -309,12 +499,42 @@ task.spawn(function()
             end
         end
 
+        local radius = S.gap + math.max(S.horizontalSize, S.verticalSize) * pulseScale
+        if S.shape == "Circle" and radius <= 3 then radius = math.max(1, radius) end
+        for index, part in ipairs(ring) do
+            local visible = S.enabled and circleShape and radius > 3
+            if visible then
+                local a0 = angle + (index - 1) * math.pi * 2 / RING_SEGMENTS
+                local a1 = angle + index * math.pi * 2 / RING_SEGMENTS
+                local from = Vector2.new(currentX + math.cos(a0) * radius, currentY + math.sin(a0) * radius)
+                local to = Vector2.new(currentX + math.cos(a1) * radius, currentY + math.sin(a1) * radius)
+                local color = gradientColor((index - 0.5) / RING_SEGMENTS, 1, now)
+                part.outline.From, part.outline.To = from, to
+                part.outline.Thickness = S.thickness + 2 * S.outlineThickness
+                part.outline.Color = S.outlineColor
+                part.outline.Transparency = S.opacity
+                part.outline.Visible = S.outline and S.outlineThickness > 0
+                part.glow.From, part.glow.To = from, to
+                part.glow.Thickness = S.thickness + 8
+                part.glow.Color = color
+                part.glow.Transparency = S.opacity * S.glowIntensity * 0.28
+                part.glow.Visible = S.glow
+                part.line.From, part.line.To = from, to
+                part.line.Thickness = S.thickness
+                part.line.Color = color
+                part.line.Transparency = S.opacity
+                part.line.Visible = true
+            else
+                part.outline.Visible, part.glow.Visible, part.line.Visible = false, false, false
+            end
+        end
+
         local dotColor = S.rainbow and hsvColor(now * S.gradientSpeed * 0.15) or S.color1
         dotOutline.Position = Vector2.new(currentX, currentY)
-        dotOutline.Radius = math.max(2, S.thickness + 2)
+        dotOutline.Radius = math.max(1, S.thickness + S.outlineThickness)
         dotOutline.Color = S.outlineColor
         dotOutline.Transparency = S.opacity
-        dotOutline.Visible = S.enabled and S.dot and S.outline
+        dotOutline.Visible = S.enabled and S.dot and S.outline and S.outlineThickness > 0
         dot.Position = Vector2.new(currentX, currentY)
         dot.Radius = math.max(1, S.thickness)
         dot.Color = dotColor
