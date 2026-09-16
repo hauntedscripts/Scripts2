@@ -2015,7 +2015,34 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
     local profiles = tab:AddRightGroupbox("Settings File")
     profiles:AddButton({ Text = "Save Settings", Func = function()
         local function colorData(color) return { color.R, color.G, color.B } end
+        local function controlData(control)
+            if not control then return nil end
+            if control.Type == "Toggle" then return control.Value == true end
+            if control.Type == "Slider" then return tonumber(control.Value) end
+            if control.Type == "KeyPicker" then return type(control.Value) == "string" and control.Value or "None" end
+            if control.Type == "Dropdown" then
+                if control.Multi then
+                    local selected = {}
+                    for key, value in pairs(control.Value or {}) do
+                        if type(key) == "string" then selected[key] = value == true end
+                    end
+                    return selected
+                end
+                return type(control.Value) == "string" and control.Value or nil
+            end
+            return nil
+        end
+        local featureControls = {}
+        for id, control in pairs(Toggles) do
+            local value = controlData(control)
+            if value ~= nil then featureControls[id] = value end
+        end
+        for id, control in pairs(Options) do
+            local value = controlData(control)
+            if value ~= nil then featureControls[id] = value end
+        end
         local data = {
+            version = 2, controls = featureControls,
             opacity = Library.UIOpacity, compact = Library.CompactMode,
             performance = Library.PerformanceMode, showFPS = Library.ShowFPS,
             rainbow = Library.RainbowEnabled, rainbowSpeed = Library.RainbowSpeed,
@@ -2054,6 +2081,17 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
         if data.x and data.y then self.Position = Vector2.new(data.x, data.y) end
         if data.menuKey then menuPicker:SetValue(data.menuKey) end
         if data.panicKey then panicPicker:SetValue(data.panicKey) end
+        if type(data.controls) == "table" then
+            local loaded = 0
+            for id, value in pairs(data.controls) do
+                local control = Toggles[id] or Options[id]
+                if control and control.SetValue then
+                    local applied = pcall(function() control:SetValue(value) end)
+                    if applied then loaded = loaded + 1 end
+                end
+            end
+            notify("Loaded " .. tostring(loaded) .. " feature controls.", "UE Matcha", 3)
+        end
         self._visibilityDirty = true
         notify("Settings loaded.", "UE Matcha", 3)
     end })
