@@ -1693,6 +1693,9 @@ function WindowMethods:_updateKeyPickers()
     end
     for _, picker in ipairs(Library.KeyPickerList) do
         if picker.Window == self and picker ~= self.CaptureKey then
+            -- Isolate individual pickers: a stale/invalid binding must not
+            -- abort processing for every other feature in this frame.
+            local pickerOk = pcall(function()
             local state = picker:GetState()
             -- The menu key is reserved. A feature bound to the same key must not
             -- fire when the user only intends to hide or show the interface.
@@ -1716,6 +1719,10 @@ function WindowMethods:_updateKeyPickers()
                 safeCallback(picker.Callback, true)
             end
             picker.LastState = state
+            end
+            end)
+            if not pickerOk then
+                picker.LastState = false
             end
         end
     end
@@ -2054,8 +2061,16 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
             gradientBottom = colorData(Library.GradientBottomColor),
             menuKey = menuPicker.Value, panicKey = panicPicker.Value
         }
-        local ok, err = pcall(function() writefile(Library.SettingsFile, HttpService:JSONEncode(data)) end)
-        notify(ok and "Settings saved." or ("Save failed: " .. tostring(err)), "UE Matcha", 3)
+        local ok, err = pcall(function()
+            local encoded = HttpService:JSONEncode(data)
+            writefile(Library.SettingsFile, encoded)
+            -- Verify the actual file path immediately; silent write failures
+            -- otherwise look like a successful save to the user.
+            local saved = readfile(Library.SettingsFile)
+            if type(saved) ~= "string" or #saved < 2 then error("file verification failed") end
+            HttpService:JSONDecode(saved)
+        end)
+        notify(ok and "Settings saved and verified." or ("Save failed: " .. tostring(err)), "UE Matcha", 3)
     end })
     profiles:AddButton({ Text = "Load Settings", Func = function()
         local ok, data = pcall(function() return HttpService:JSONDecode(readfile(Library.SettingsFile)) end)
@@ -2086,6 +2101,9 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
             for id, value in pairs(data.controls) do
                 local control = Toggles[id] or Options[id]
                 if control and control.SetValue then
+                    if control.Type == "Toggle" then value = value == true
+                    elseif control.Type == "Slider" then value = tonumber(value) or control.Value
+                    elseif control.Type == "KeyPicker" and type(value) ~= "string" then value = "None" end
                     local applied = pcall(function() control:SetValue(value) end)
                     if applied then loaded = loaded + 1 end
                 end
