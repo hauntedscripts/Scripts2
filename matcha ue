@@ -158,14 +158,13 @@ local Library = {
     Black = Color3.new(0, 0, 0),
     FontSize = 13,
     Toggled = true,
-    ToggleKey = nil,
+    ToggleKey = 0x23,
     Windows = {},
     KeyPickerList = {},
     Signals = {},
     UnloadCallbacks = {},
     _drawings = {},
     _accentDrawings = {},
-    _themeDrawings = {},
     _unloaded = false,
     RainbowEnabled = false,
     RainbowSpeed = 0.18,
@@ -185,33 +184,15 @@ Library.Options = Options
 
 local function drawing(drawType, properties, owner)
     local object = Drawing.new(drawType)
-    for key, value in pairs(properties or {}) do
-        if key ~= "NoTheme" then object[key] = value end
-    end
+    for key, value in pairs(properties or {}) do object[key] = value end
     object.Visible = false
     object.Transparency = Library.UIOpacity
     table.insert(Library._drawings, object)
     local initialColor = properties and properties.Color
-    if initialColor and not properties.NoTheme then
-        local themeFields = {
-            "BackgroundColor", "MainColor", "OutlineColor", "FontColor",
-            "GradientTopColor", "GradientBottomColor"
-        }
-        for _, field in ipairs(themeFields) do
-            local fc = Library[field]
-            if fc and math.abs(initialColor.R - fc.R) < 0.0001
-                and math.abs(initialColor.G - fc.G) < 0.0001
-                and math.abs(initialColor.B - fc.B) < 0.0001 then
-                if not Library._themeDrawings[field] then Library._themeDrawings[field] = {} end
-                table.insert(Library._themeDrawings[field], object)
-                break
-            end
-        end
-        if math.abs(initialColor.R - Library.AccentColor.R) < 0.0001
-            and math.abs(initialColor.G - Library.AccentColor.G) < 0.0001
-            and math.abs(initialColor.B - Library.AccentColor.B) < 0.0001 then
-            table.insert(Library._accentDrawings, object)
-        end
+    if initialColor and math.abs(initialColor.R - Library.AccentColor.R) < 0.0001
+        and math.abs(initialColor.G - Library.AccentColor.G) < 0.0001
+        and math.abs(initialColor.B - Library.AccentColor.B) < 0.0001 then
+        table.insert(Library._accentDrawings, object)
     end
     if owner then table.insert(owner._drawings, object) end
     return object
@@ -257,12 +238,15 @@ function Library:SetOpacity(value)
 end
 
 function Library:SetThemeColor(field, color)
-    if not field or not color then return end
-    local tagged = self._themeDrawings[field]
-    if tagged then
-        for _, object in ipairs(tagged) do
-            pcall(function() object.Color = color end)
-        end
+    local old = self[field]
+    if not old or not color then return end
+    for _, object in ipairs(self._drawings) do
+        pcall(function()
+            local current = object.Color
+            if current and math.abs(current.R - old.R) < 0.0001 and math.abs(current.G - old.G) < 0.0001 and math.abs(current.B - old.B) < 0.0001 then
+                object.Color = color
+            end
+        end)
     end
     self[field] = color
 end
@@ -751,12 +735,10 @@ function WindowMethods:_ensureFrame()
         Accent = self:_draw("Square", { Filled = true, Color = Library.AccentColor, ZIndex = 6 }),
         Title = self:_draw("Text", { Text = self.Title, Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 7 }),
         TabLine = self:_draw("Line", { Thickness = 1, Color = Library.OutlineColor, ZIndex = 4 }),
-        BottomBorder = self:_draw("Line", { Thickness = 1, Color = Library.Black, ZIndex = 7 }),
-        BottomInnerBorder = self:_draw("Line", { Thickness = 1, Color = Library.OutlineColor, ZIndex = 6 }),
         DragWireframe = self:_draw("Square", { Filled = false, Thickness = 2, Color = Library.AccentColor, ZIndex = 60 })
     }
     self.Frame.Gradient = {}
-    for index = 1, 64 do
+    for index = 1, 12 do
         self.Frame.Gradient[index] = self:_draw("Square", { Filled = true, Color = Library.GradientTopColor, ZIndex = 1 })
     end
     self.Frame.FPS = self:_draw("Text", { Text = "", Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = false, ZIndex = 8 })
@@ -796,7 +778,6 @@ function WindowMethods:_ensureControlPack(control)
         pack.Background = self:_draw("Square", { Filled = true, Color = Library.MainColor, ZIndex = 7 })
         pack.Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 8 })
         pack.InnerBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 9 })
-        pack.BottomBorder = self:_draw("Line", { Thickness = 1, Color = Library.Black, ZIndex = 10 })
         pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 10 })
     elseif control.Type == "Toggle" then
         pack.Outer = self:_draw("Square", { Filled = true, Color = Library.Black, ZIndex = 7 })
@@ -816,7 +797,7 @@ function WindowMethods:_ensureControlPack(control)
         pack.Value = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = true, ZIndex = 9 })
     elseif control.Type == "ColorPicker" then
         pack.Text = self:_draw("Text", { Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 8 })
-        pack.Swatch = self:_draw("Square", { Filled = true, Color = control.Value, ZIndex = 8, NoTheme = true })
+        pack.Swatch = self:_draw("Square", { Filled = true, Color = control.Value, ZIndex = 8 })
         pack.Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 9 })
     end
 
@@ -868,13 +849,8 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.InnerBorder.Position = Vector2.new(x + 1, y + ui(3))
         pack.InnerBorder.Size = Vector2.new(width - 2, ui(18))
         pack.InnerBorder.Visible = true
-        local buttonBottom = y + ui(2) + ui(20) - 1
-        pack.BottomBorder.From = Vector2.new(x, buttonBottom)
-        pack.BottomBorder.To = Vector2.new(x + width - 1, buttonBottom)
-        pack.BottomBorder.Color = hovered and Library.AccentColor or Library.Black
-        pack.BottomBorder.Visible = true
         pack.Text.Text = control.Text or "Button"
-        pack.Text.Position = Vector2.new(x + width / 2, y + ui(7) + TEXT_Y_OFFSET + 2)
+        pack.Text.Position = Vector2.new(x + width / 2, y + ui(7) + TEXT_Y_OFFSET)
         pack.Text.Visible = true
 
     elseif control.Type == "Toggle" then
@@ -891,7 +867,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Fill.Visible = control.Value == true
         pack.Text.Text = control.Text or control.Id
         pack.Text.Color = control.Risky and Library.RiskColor or Library.FontColor
-        pack.Text.Position = Vector2.new(x + ui(20), y + ui(2) + TEXT_Y_OFFSET - 2)
+        pack.Text.Position = Vector2.new(x + ui(20), y + ui(2) + TEXT_Y_OFFSET)
         pack.Text.Visible = true
 
         local picker = control.InlineKeyPicker
@@ -926,7 +902,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Text.Position = Vector2.new(x, y + TEXT_Y_OFFSET)
         pack.Text.Visible = true
         pack.Value.Text = tostring(control.Value) .. tostring(control.Suffix or "")
-        pack.Value.Position = Vector2.new(x + width - 30, y + 1 + TEXT_Y_OFFSET + 2)
+        pack.Value.Position = Vector2.new(x + width - 30, y + 1 + TEXT_Y_OFFSET)
         pack.Value.Visible = true
         pack.Bar.Position = Vector2.new(x, y + ui(20))
         pack.Bar.Size = Vector2.new(width, ui(13))
@@ -958,7 +934,7 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
             if self.CaptureInput == control then text = text .. "_" end
         end
         pack.Value.Text = text
-        pack.Value.Position = Vector2.new(x + width / 2, y + ui(21) + TEXT_Y_OFFSET + 2)
+        pack.Value.Position = Vector2.new(x + width / 2, y + ui(21) + TEXT_Y_OFFSET)
         pack.Value.Visible = true
         control._boxRect = { x = x, y = y + ui(17), w = width, h = ui(19) }
 
@@ -984,16 +960,14 @@ function WindowMethods:_renderControl(control, x, y, width, activeList)
         pack.Text.Text = control.Text or control.Id
         pack.Text.Position = Vector2.new(x, y + 2 + TEXT_Y_OFFSET)
         pack.Text.Visible = true
-        local swatchX = x + width - ui(38)
-        local swatchY = y + ui(4)
-        pack.Swatch.Position = Vector2.new(swatchX + 1, swatchY + 1)
-        pack.Swatch.Size = Vector2.new(ui(38) - 2, ui(16) - 2)
+        pack.Swatch.Position = Vector2.new(x + width - ui(38), y + ui(2))
+        pack.Swatch.Size = Vector2.new(ui(38), ui(16))
         pack.Swatch.Color = control.Value
         pack.Swatch.Visible = true
-        pack.Border.Position = Vector2.new(swatchX, swatchY)
+        pack.Border.Position = Vector2.new(x + width - ui(38), y + ui(2))
         pack.Border.Size = Vector2.new(ui(38), ui(16))
         pack.Border.Visible = true
-        control._boxRect = { x = swatchX, y = swatchY, w = ui(38), h = ui(16) }
+        control._boxRect = { x = x + width - ui(38), y = y + ui(2), w = ui(38), h = ui(16) }
     end
 
     return y + height
@@ -1124,7 +1098,7 @@ function WindowMethods:_renderDropdownOverlay(control)
         item.Background.Visible = true
         item.Text.Text = (selected and "[x] " or "") .. tostring(value)
         item.Text.Color = selected and Library.AccentColor or Library.FontColor
-        item.Text.Position = Vector2.new(x + ui(6), itemY + ui(3) + TEXT_Y_OFFSET + 2)
+        item.Text.Position = Vector2.new(x + ui(6), itemY + ui(3) + TEXT_Y_OFFSET)
         item.Text.Visible = true
     end
 end
@@ -1132,8 +1106,8 @@ end
 local COLOR_PICKER = {
     Width = 250, Height = 236,
     SVWidth = 180, SVHeight = 104,
-    SVColumns = 45, SVRows = 26,
-    HueSegments = 52
+    SVColumns = 12, SVRows = 8,
+    HueSegments = 16
 }
 
 function WindowMethods:_ensureColorPickerPack()
@@ -1143,21 +1117,20 @@ function WindowMethods:_ensureColorPickerPack()
         Border = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.OutlineColor, ZIndex = 47 }),
         Header = self:_draw("Text", { Text = "COLOR PICKER", Color = Library.FontColor, Size = Library.FontSize, Outline = true, ZIndex = 48 }),
         Hint = self:_draw("Text", { Text = "RGB: click a number, type 0-255, press Enter", Color = Library.FontColor, Size = 12, Outline = true, ZIndex = 48 }),
-        Preview = self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 44, NoTheme = true }),
+        Preview = self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 44 }),
         PreviewBorder = self:_draw("Square", { Filled = false, Thickness = 1, Color = Library.Black, ZIndex = 45 }),
-        SVCursor = self:_draw("Square", { Filled = false, Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46, NoTheme = true }),
-        HueCursor = self:_draw("Line", { Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46, NoTheme = true }),
+        SVCursor = self:_draw("Square", { Filled = false, Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46 }),
+        HueCursor = self:_draw("Line", { Thickness = 2, Color = Color3.new(1, 1, 1), ZIndex = 46 }),
         SVCells = {}, HueCells = {}, Rows = {}
     }
 
     for row = 1, COLOR_PICKER.SVRows do
         for column = 1, COLOR_PICKER.SVColumns do
-            table.insert(pack.SVCells, self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 42, NoTheme = true }))
+            table.insert(pack.SVCells, self:_draw("Square", { Filled = true, Color = Color3.new(1, 1, 1), ZIndex = 42 }))
         end
     end
     for index = 1, COLOR_PICKER.HueSegments do
-        local hueCenter = (index - 0.5) / COLOR_PICKER.HueSegments
-        table.insert(pack.HueCells, self:_draw("Square", { Filled = true, Color = hsvToRgb(hueCenter % 1, 1, 1), ZIndex = 42, NoTheme = true }))
+        table.insert(pack.HueCells, self:_draw("Square", { Filled = true, Color = hsvToRgb((index - 1) / COLOR_PICKER.HueSegments, 1, 1), ZIndex = 42 }))
     end
     for _, channel in ipairs({ "R", "G", "B" }) do
         pack.Rows[channel] = {
@@ -1220,13 +1193,13 @@ function WindowMethods:_renderColorPickerOverlay(control)
     local cellH = COLOR_PICKER.SVHeight / COLOR_PICKER.SVRows
     local cellIndex = 1
     for row = 1, COLOR_PICKER.SVRows do
-        local cellValue = 1 - ((row - 0.5) / COLOR_PICKER.SVRows)
+        local cellValue = 1 - ((row - 1) / math.max(1, COLOR_PICKER.SVRows - 1))
         for column = 1, COLOR_PICKER.SVColumns do
-            local cellSaturation = (column - 0.5) / COLOR_PICKER.SVColumns
+            local cellSaturation = (column - 1) / math.max(1, COLOR_PICKER.SVColumns - 1)
             local cell = pack.SVCells[cellIndex]
             if layoutChanged then
                 cell.Position = Vector2.new(svX + (column - 1) * cellW, svY + (row - 1) * cellH)
-                cell.Size = Vector2.new(math.ceil(cellW) + 1, math.ceil(cellH) + 1)
+                cell.Size = Vector2.new(cellW + 1, cellH + 1)
             end
             if hueChanged then cell.Color = hsvToRgb(hue, cellSaturation, cellValue) end
             if refresh then cell.Visible = true end
@@ -1239,8 +1212,6 @@ function WindowMethods:_renderColorPickerOverlay(control)
         if layoutChanged then
             cell.Position = Vector2.new(hueX, hueY + (index - 1) * hueCellH)
             cell.Size = Vector2.new(16, hueCellH + 1)
-            local hueCenter = (index - 0.5) / COLOR_PICKER.HueSegments
-            cell.Color = hsvToRgb(hueCenter % 1, 1, 1)
         end
         if refresh then cell.Visible = true end
     end
@@ -1286,7 +1257,7 @@ function WindowMethods:_renderColorPickerOverlay(control)
             row.Box.Size = Vector2.new(boxRect.w, boxRect.h)
             row.BoxBorder.Position = Vector2.new(boxRect.x, boxRect.y)
             row.BoxBorder.Size = Vector2.new(boxRect.w, boxRect.h)
-            row.Value.Position = Vector2.new(boxRect.x + boxRect.w / 2, boxRect.y + 4 + TEXT_Y_OFFSET + 2)
+            row.Value.Position = Vector2.new(boxRect.x + boxRect.w / 2, boxRect.y + 4 + TEXT_Y_OFFSET)
             row.Bar.Position = Vector2.new(barRect.x, barRect.y)
             row.Bar.Size = Vector2.new(barRect.w, barRect.h)
             row.Fill.Position = Vector2.new(barRect.x + 1, barRect.y + 1)
@@ -1349,11 +1320,10 @@ function WindowMethods:_render()
     frame.Background.Visible = not Library.GradientEnabled
     for index, strip in ipairs(frame.Gradient) do
         if Library.GradientEnabled then
-            local count = #frame.Gradient
-            local stripHeight = size.Y / count
+            local stripHeight = size.Y / #frame.Gradient
             strip.Position = Vector2.new(position.X + 1, position.Y + (index - 1) * stripHeight + 1)
-            strip.Size = Vector2.new(size.X - 2, math.ceil(stripHeight) + 1)
-            strip.Color = lerpColor(Library.GradientTopColor, Library.GradientBottomColor, (index - 0.5) / count)
+            strip.Size = Vector2.new(size.X - 2, stripHeight + 1)
+            strip.Color = lerpColor(Library.GradientTopColor, Library.GradientBottomColor, (index - 1) / (#frame.Gradient - 1))
             strip.Visible = true
         else
             strip.Visible = false
@@ -1363,17 +1333,11 @@ function WindowMethods:_render()
     frame.Header.Size = Vector2.new(size.X - 2, ui(24))
     frame.Header.Visible = true
     frame.Border.Position = position
-    frame.Border.Size = Vector2.new(size.X, size.Y - 1)
+    frame.Border.Size = size
     frame.Border.Visible = true
     frame.InnerBorder.Position = Vector2.new(position.X + 1, position.Y + 1)
     frame.InnerBorder.Size = Vector2.new(size.X - 2, size.Y - 2)
     frame.InnerBorder.Visible = true
-    frame.BottomBorder.From = Vector2.new(position.X, position.Y + size.Y - 1)
-    frame.BottomBorder.To = Vector2.new(position.X + size.X - 1, position.Y + size.Y - 1)
-    frame.BottomBorder.Visible = true
-    frame.BottomInnerBorder.From = Vector2.new(position.X + 1, position.Y + size.Y - 2)
-    frame.BottomInnerBorder.To = Vector2.new(position.X + size.X - 2, position.Y + size.Y - 2)
-    frame.BottomInnerBorder.Visible = true
     frame.Accent.Position = Vector2.new(position.X + 1, position.Y + 1)
     frame.Accent.Size = Vector2.new(size.X - 2, 2)
     frame.Accent.Visible = true
@@ -1974,12 +1938,12 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
 
     local controls = tab:AddRightGroupbox("Controls")
     local menuPicker = controls:AddKeyPicker("UESettingsMenuKey" .. suffix, {
-        Text = "Show / Hide UI", Default = "None", Mode = "Toggle",
+        Text = "Show / Hide UI", Default = "End", Mode = "Toggle",
         Callback = function(pressed) if pressed then self:Toggle() end end
     })
     menuPicker.IsMenuKey = true
     local panicPicker = controls:AddKeyPicker("UESettingsPanicKey" .. suffix, {
-        Text = "Panic Key", Default = "None", Mode = "Toggle",
+        Text = "Panic Key", Default = "Delete", Mode = "Toggle",
         Callback = function(pressed)
             if not pressed then return end
             for _, toggle in pairs(Toggles) do
@@ -2015,7 +1979,36 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
     local profiles = tab:AddRightGroupbox("Settings File")
     profiles:AddButton({ Text = "Save Settings", Func = function()
         local function colorData(color) return { color.R, color.G, color.B } end
+        local function controlData(control)
+            if not control then return nil end
+            if control.Type == "Toggle" then return control.Value == true end
+            if control.Type == "Slider" then return tonumber(control.Value) end
+            if control.Type == "KeyPicker" then
+                return type(control.Value) == "string" and control.Value or "None"
+            end
+            if control.Type == "Dropdown" then
+                if control.Multi then
+                    local selected = {}
+                    for key, value in pairs(control.Value or {}) do
+                        if type(key) == "string" then selected[key] = value == true end
+                    end
+                    return selected
+                end
+                return type(control.Value) == "string" and control.Value or nil
+            end
+            return nil
+        end
+        local featureControls = {}
+        for id, control in pairs(Toggles) do
+            local value = controlData(control)
+            if value ~= nil then featureControls[id] = value end
+        end
+        for id, control in pairs(Options) do
+            local value = controlData(control)
+            if value ~= nil then featureControls[id] = value end
+        end
         local data = {
+            version = 2, controls = featureControls,
             opacity = Library.UIOpacity, compact = Library.CompactMode,
             performance = Library.PerformanceMode, showFPS = Library.ShowFPS,
             rainbow = Library.RainbowEnabled, rainbowSpeed = Library.RainbowSpeed,
@@ -2054,6 +2047,17 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
         if data.x and data.y then self.Position = Vector2.new(data.x, data.y) end
         if data.menuKey then menuPicker:SetValue(data.menuKey) end
         if data.panicKey then panicPicker:SetValue(data.panicKey) end
+        if type(data.controls) == "table" then
+            local loaded = 0
+            for id, value in pairs(data.controls) do
+                local control = Toggles[id] or Options[id]
+                if control and control.SetValue then
+                    local applied = pcall(function() control:SetValue(value) end)
+                    if applied then loaded = loaded + 1 end
+                end
+            end
+            notify("Loaded " .. tostring(loaded) .. " feature controls.", "UE Matcha", 3)
+        end
         self._visibilityDirty = true
         notify("Settings loaded.", "UE Matcha", 3)
     end })
