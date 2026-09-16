@@ -236,7 +236,9 @@ function Library:SafeCallback(callback, ...)
 end
 
 function Library:Notify(text, time)
-    notify(tostring(text or ""), "UE Matcha", time or 3)
+    -- Notifications are intentionally disabled in this build.  This keeps
+    -- config operations and scripts using Library:Notify silent.
+    return self
 end
 
 function Library:SetFontSize(size)
@@ -2016,9 +2018,12 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
     profiles:AddButton({ Text = "Save Settings", Func = function()
         local function colorData(color) return { color.R, color.G, color.B } end
         local controls = {}
+        local toggleStates = {}
         for id, control in pairs(Toggles) do
             if control and control.Type == "Toggle" then
-                controls[id] = { type = "Toggle", value = control.Value == true }
+                local enabled = control.Value == true
+                toggleStates[id] = enabled
+                controls[id] = { type = "Toggle", value = enabled }
             end
         end
         for id, control in pairs(Options) do
@@ -2040,7 +2045,7 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
             outline = colorData(Library.OutlineColor), gradientTop = colorData(Library.GradientTopColor),
             gradientBottom = colorData(Library.GradientBottomColor),
             menuKey = menuPicker.Value, panicKey = panicPicker.Value,
-            controls = controls
+            controls = controls, toggles = toggleStates
         }
         pcall(function() writefile(Library.SettingsFile, HttpService:JSONEncode(data)) end)
     end })
@@ -2052,6 +2057,9 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
         local function color(value, fallback)
             return type(value) == "table" and Color3.new(value[1] or fallback.R, value[2] or fallback.G, value[3] or fallback.B) or fallback
         end
+        local function setIfChanged(control, value)
+            if control and control.Value ~= value then control:SetValue(value) end
+        end
         Options["UESettingsAccent" .. suffix]:SetValueRGB(color(data.accent, Library.StaticAccentColor))
         Options["UESettingsBackground" .. suffix]:SetValueRGB(color(data.background, Library.BackgroundColor))
         Options["UESettingsPanels" .. suffix]:SetValueRGB(color(data.panels, Library.MainColor))
@@ -2061,25 +2069,54 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
         Options["UESettingsGradientBottom" .. suffix]:SetValueRGB(color(data.gradientBottom, Library.GradientBottomColor))
         if data.opacity ~= nil then Options["UESettingsOpacity" .. suffix]:SetValue(data.opacity) end
         if data.rainbowSpeed ~= nil then Options["UESettingsRainbowSpeed" .. suffix]:SetValue(data.rainbowSpeed) end
-        if data.rainbow ~= nil then Toggles["UESettingsRainbow" .. suffix]:SetValue(data.rainbow == true) end
-        if data.gradient ~= nil then Toggles["UESettingsGradient" .. suffix]:SetValue(data.gradient == true) end
-        if data.compact ~= nil then Toggles["UESettingsCompact" .. suffix]:SetValue(data.compact == true) end
-        if data.performance ~= nil then Toggles["UESettingsPerformance" .. suffix]:SetValue(data.performance == true) end
-        if data.showFPS ~= nil then Toggles["UESettingsShowFPS" .. suffix]:SetValue(data.showFPS == true) end
+        if data.rainbow ~= nil then setIfChanged(Toggles["UESettingsRainbow" .. suffix], data.rainbow == true) end
+        if data.gradient ~= nil then setIfChanged(Toggles["UESettingsGradient" .. suffix], data.gradient == true) end
+        if data.compact ~= nil then setIfChanged(Toggles["UESettingsCompact" .. suffix], data.compact == true) end
+        if data.performance ~= nil then setIfChanged(Toggles["UESettingsPerformance" .. suffix], data.performance == true) end
+        if data.showFPS ~= nil then setIfChanged(Toggles["UESettingsShowFPS" .. suffix], data.showFPS == true) end
+        -- Restore toggle state in one pass, without firing callbacks while the
+        -- table is being iterated. Callback-driven toggles can otherwise switch
+        -- other toggles off and make a loaded config look completely disabled.
+        local loadedToggles = {}
+        if type(data.toggles) == "table" then
+            for id, value in pairs(data.toggles) do
+                if type(value) == "boolean" then loadedToggles[id] = value end
+            end
+        end
+        if next(loadedToggles) == nil and type(data.controls) == "table" then
+            for id, saved in pairs(data.controls) do
+                if type(saved) == "table" and saved.type == "Toggle" and type(saved.value) == "boolean" then
+                    loadedToggles[id] = saved.value
+                end
+            end
+        end
+        local previousToggles = {}
+        for id, value in pairs(loadedToggles) do
+            local control = Toggles[id]
+            if control and control.Type == "Toggle" then
+                previousToggles[id] = control.Value == true
+                control.Value = value
+            end
+        end
+        -- Give feature callbacks the final requested state, then re-apply the
+        -- values in case one callback changes a related toggle.
+        for id, value in pairs(loadedToggles) do
+            local control = Toggles[id]
+            if control and control.Type == "Toggle" and previousToggles[id] ~= value then
+                safeCallback(control.Callback, value)
+                safeCallback(control.Changed, value)
+            end
+        end
+        for id, value in pairs(loadedToggles) do
+            local control = Toggles[id]
+            if control and control.Type == "Toggle" then control.Value = value end
+        end
         if type(data.controls) == "table" then
             for id, saved in pairs(data.controls) do
                 local control = Toggles[id] or Options[id]
-                if control and type(saved) == "table" and saved.value ~= nil then
+                if control and type(saved) == "table" and saved.value ~= nil and control.Type ~= "Toggle" then
                     pcall(function()
-                        if control.Type == "Toggle" then
-                            -- Apply the stored state without firing feature callbacks
-                            -- in an arbitrary table order. Some callbacks intentionally
-                            -- disable related toggles, which used to blank the whole UI
-                            -- when a config was loaded.
-                            control.Value = saved.value == true
-                        elseif control.Type == "Slider" then
-                            control:SetValue(saved.value)
-                        elseif control.Type == "KeyPicker" then
+                        if control.Type == "Slider" or control.Type == "KeyPicker" then
                             control:SetValue(saved.value)
                         end
                     end)
