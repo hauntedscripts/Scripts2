@@ -158,13 +158,14 @@ local Library = {
     Black = Color3.new(0, 0, 0),
     FontSize = 13,
     Toggled = true,
-    ToggleKey = 0x23,
+    ToggleKey = nil,
     Windows = {},
     KeyPickerList = {},
     Signals = {},
     UnloadCallbacks = {},
     _drawings = {},
     _accentDrawings = {},
+    _themeDrawings = {},
     _unloaded = false,
     RainbowEnabled = false,
     RainbowSpeed = 0.18,
@@ -189,10 +190,26 @@ local function drawing(drawType, properties, owner)
     object.Transparency = Library.UIOpacity
     table.insert(Library._drawings, object)
     local initialColor = properties and properties.Color
-    if initialColor and math.abs(initialColor.R - Library.AccentColor.R) < 0.0001
-        and math.abs(initialColor.G - Library.AccentColor.G) < 0.0001
-        and math.abs(initialColor.B - Library.AccentColor.B) < 0.0001 then
-        table.insert(Library._accentDrawings, object)
+    if initialColor then
+        local themeFields = {
+            "BackgroundColor", "MainColor", "OutlineColor", "FontColor",
+            "GradientTopColor", "GradientBottomColor"
+        }
+        for _, field in ipairs(themeFields) do
+            local fc = Library[field]
+            if fc and math.abs(initialColor.R - fc.R) < 0.0001
+                and math.abs(initialColor.G - fc.G) < 0.0001
+                and math.abs(initialColor.B - fc.B) < 0.0001 then
+                if not Library._themeDrawings[field] then Library._themeDrawings[field] = {} end
+                table.insert(Library._themeDrawings[field], object)
+                break
+            end
+        end
+        if math.abs(initialColor.R - Library.AccentColor.R) < 0.0001
+            and math.abs(initialColor.G - Library.AccentColor.G) < 0.0001
+            and math.abs(initialColor.B - Library.AccentColor.B) < 0.0001 then
+            table.insert(Library._accentDrawings, object)
+        end
     end
     if owner then table.insert(owner._drawings, object) end
     return object
@@ -238,15 +255,12 @@ function Library:SetOpacity(value)
 end
 
 function Library:SetThemeColor(field, color)
-    local old = self[field]
-    if not old or not color then return end
-    for _, object in ipairs(self._drawings) do
-        pcall(function()
-            local current = object.Color
-            if current and math.abs(current.R - old.R) < 0.0001 and math.abs(current.G - old.G) < 0.0001 and math.abs(current.B - old.B) < 0.0001 then
-                object.Color = color
-            end
-        end)
+    if not field or not color then return end
+    local tagged = self._themeDrawings[field]
+    if tagged then
+        for _, object in ipairs(tagged) do
+            pcall(function() object.Color = color end)
+        end
     end
     self[field] = color
 end
@@ -738,7 +752,7 @@ function WindowMethods:_ensureFrame()
         DragWireframe = self:_draw("Square", { Filled = false, Thickness = 2, Color = Library.AccentColor, ZIndex = 60 })
     }
     self.Frame.Gradient = {}
-    for index = 1, 12 do
+    for index = 1, 64 do
         self.Frame.Gradient[index] = self:_draw("Square", { Filled = true, Color = Library.GradientTopColor, ZIndex = 1 })
     end
     self.Frame.FPS = self:_draw("Text", { Text = "", Color = Library.FontColor, Size = Library.FontSize, Outline = true, Center = false, ZIndex = 8 })
@@ -1106,8 +1120,8 @@ end
 local COLOR_PICKER = {
     Width = 250, Height = 236,
     SVWidth = 180, SVHeight = 104,
-    SVColumns = 12, SVRows = 8,
-    HueSegments = 16
+    SVColumns = 45, SVRows = 26,
+    HueSegments = 52
 }
 
 function WindowMethods:_ensureColorPickerPack()
@@ -1130,7 +1144,8 @@ function WindowMethods:_ensureColorPickerPack()
         end
     end
     for index = 1, COLOR_PICKER.HueSegments do
-        table.insert(pack.HueCells, self:_draw("Square", { Filled = true, Color = hsvToRgb((index - 1) / COLOR_PICKER.HueSegments, 1, 1), ZIndex = 42 }))
+        local hueCenter = (index - 0.5) / COLOR_PICKER.HueSegments
+        table.insert(pack.HueCells, self:_draw("Square", { Filled = true, Color = hsvToRgb(hueCenter % 1, 1, 1), ZIndex = 42 }))
     end
     for _, channel in ipairs({ "R", "G", "B" }) do
         pack.Rows[channel] = {
@@ -1193,13 +1208,13 @@ function WindowMethods:_renderColorPickerOverlay(control)
     local cellH = COLOR_PICKER.SVHeight / COLOR_PICKER.SVRows
     local cellIndex = 1
     for row = 1, COLOR_PICKER.SVRows do
-        local cellValue = 1 - ((row - 1) / math.max(1, COLOR_PICKER.SVRows - 1))
+        local cellValue = 1 - ((row - 0.5) / COLOR_PICKER.SVRows)
         for column = 1, COLOR_PICKER.SVColumns do
-            local cellSaturation = (column - 1) / math.max(1, COLOR_PICKER.SVColumns - 1)
+            local cellSaturation = (column - 0.5) / COLOR_PICKER.SVColumns
             local cell = pack.SVCells[cellIndex]
             if layoutChanged then
                 cell.Position = Vector2.new(svX + (column - 1) * cellW, svY + (row - 1) * cellH)
-                cell.Size = Vector2.new(cellW + 1, cellH + 1)
+                cell.Size = Vector2.new(math.ceil(cellW) + 1, math.ceil(cellH) + 1)
             end
             if hueChanged then cell.Color = hsvToRgb(hue, cellSaturation, cellValue) end
             if refresh then cell.Visible = true end
@@ -1212,6 +1227,8 @@ function WindowMethods:_renderColorPickerOverlay(control)
         if layoutChanged then
             cell.Position = Vector2.new(hueX, hueY + (index - 1) * hueCellH)
             cell.Size = Vector2.new(16, hueCellH + 1)
+            local hueCenter = (index - 0.5) / COLOR_PICKER.HueSegments
+            cell.Color = hsvToRgb(hueCenter % 1, 1, 1)
         end
         if refresh then cell.Visible = true end
     end
@@ -1320,10 +1337,11 @@ function WindowMethods:_render()
     frame.Background.Visible = not Library.GradientEnabled
     for index, strip in ipairs(frame.Gradient) do
         if Library.GradientEnabled then
-            local stripHeight = size.Y / #frame.Gradient
+            local count = #frame.Gradient
+            local stripHeight = size.Y / count
             strip.Position = Vector2.new(position.X + 1, position.Y + (index - 1) * stripHeight + 1)
-            strip.Size = Vector2.new(size.X - 2, stripHeight + 1)
-            strip.Color = lerpColor(Library.GradientTopColor, Library.GradientBottomColor, (index - 1) / (#frame.Gradient - 1))
+            strip.Size = Vector2.new(size.X - 2, math.ceil(stripHeight) + 1)
+            strip.Color = lerpColor(Library.GradientTopColor, Library.GradientBottomColor, (index - 0.5) / count)
             strip.Visible = true
         else
             strip.Visible = false
@@ -1938,12 +1956,12 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
 
     local controls = tab:AddRightGroupbox("Controls")
     local menuPicker = controls:AddKeyPicker("UESettingsMenuKey" .. suffix, {
-        Text = "Show / Hide UI", Default = "End", Mode = "Toggle",
+        Text = "Show / Hide UI", Default = "None", Mode = "Toggle",
         Callback = function(pressed) if pressed then self:Toggle() end end
     })
     menuPicker.IsMenuKey = true
     local panicPicker = controls:AddKeyPicker("UESettingsPanicKey" .. suffix, {
-        Text = "Panic Key", Default = "Delete", Mode = "Toggle",
+        Text = "Panic Key", Default = "None", Mode = "Toggle",
         Callback = function(pressed)
             if not pressed then return end
             for _, toggle in pairs(Toggles) do
@@ -1983,9 +2001,7 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
             if not control then return nil end
             if control.Type == "Toggle" then return control.Value == true end
             if control.Type == "Slider" then return tonumber(control.Value) end
-            if control.Type == "KeyPicker" then
-                return type(control.Value) == "string" and control.Value or "None"
-            end
+            if control.Type == "KeyPicker" then return type(control.Value) == "string" and control.Value or "None" end
             if control.Type == "Dropdown" then
                 if control.Multi then
                     local selected = {}
