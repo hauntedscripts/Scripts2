@@ -1693,9 +1693,6 @@ function WindowMethods:_updateKeyPickers()
     end
     for _, picker in ipairs(Library.KeyPickerList) do
         if picker.Window == self and picker ~= self.CaptureKey then
-            -- Isolate individual pickers: a stale/invalid binding must not
-            -- abort processing for every other feature in this frame.
-            local pickerOk = pcall(function()
             local state = picker:GetState()
             -- The menu key is reserved. A feature bound to the same key must not
             -- fire when the user only intends to hide or show the interface.
@@ -1719,10 +1716,6 @@ function WindowMethods:_updateKeyPickers()
                 safeCallback(picker.Callback, true)
             end
             picker.LastState = state
-            end
-            end)
-            if not pickerOk then
-                picker.LastState = false
             end
         end
     end
@@ -1981,7 +1974,7 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
 
     local controls = tab:AddRightGroupbox("Controls")
     local menuPicker = controls:AddKeyPicker("UESettingsMenuKey" .. suffix, {
-        Text = "Show / Hide UI", Default = "None", Mode = "Toggle",
+        Text = "Show / Hide UI", Default = "End", Mode = "Toggle",
         Callback = function(pressed) if pressed then self:Toggle() end end
     })
     menuPicker.IsMenuKey = true
@@ -2022,34 +2015,21 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
     local profiles = tab:AddRightGroupbox("Settings File")
     profiles:AddButton({ Text = "Save Settings", Func = function()
         local function colorData(color) return { color.R, color.G, color.B } end
-        local function controlData(control)
-            if not control then return nil end
-            if control.Type == "Toggle" then return control.Value == true end
-            if control.Type == "Slider" then return tonumber(control.Value) end
-            if control.Type == "KeyPicker" then return type(control.Value) == "string" and control.Value or "None" end
-            if control.Type == "Dropdown" then
-                if control.Multi then
-                    local selected = {}
-                    for key, value in pairs(control.Value or {}) do
-                        if type(key) == "string" then selected[key] = value == true end
-                    end
-                    return selected
-                end
-                return type(control.Value) == "string" and control.Value or nil
-            end
-            return nil
-        end
-        local featureControls = {}
+        local controls = {}
         for id, control in pairs(Toggles) do
-            local value = controlData(control)
-            if value ~= nil then featureControls[id] = value end
+            if control and control.Type == "Toggle" then
+                controls[id] = { type = "Toggle", value = control.Value == true }
+            end
         end
         for id, control in pairs(Options) do
-            local value = controlData(control)
-            if value ~= nil then featureControls[id] = value end
+            if control and control.Type == "Slider" then
+                controls[id] = { type = "Slider", value = control.Value }
+            elseif control and control.Type == "KeyPicker" then
+                controls[id] = { type = "KeyPicker", value = control.Value }
+            end
         end
         local data = {
-            version = 2, controls = featureControls,
+            version = 2,
             opacity = Library.UIOpacity, compact = Library.CompactMode,
             performance = Library.PerformanceMode, showFPS = Library.ShowFPS,
             rainbow = Library.RainbowEnabled, rainbowSpeed = Library.RainbowSpeed,
@@ -2059,22 +2039,16 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
             panels = colorData(Library.MainColor), text = colorData(Library.FontColor),
             outline = colorData(Library.OutlineColor), gradientTop = colorData(Library.GradientTopColor),
             gradientBottom = colorData(Library.GradientBottomColor),
-            menuKey = menuPicker.Value, panicKey = panicPicker.Value
+            menuKey = menuPicker.Value, panicKey = panicPicker.Value,
+            controls = controls
         }
-        local ok, err = pcall(function()
-            local encoded = HttpService:JSONEncode(data)
-            writefile(Library.SettingsFile, encoded)
-            -- Verify the actual file path immediately; silent write failures
-            -- otherwise look like a successful save to the user.
-            local saved = readfile(Library.SettingsFile)
-            if type(saved) ~= "string" or #saved < 2 then error("file verification failed") end
-            HttpService:JSONDecode(saved)
-        end)
-        notify(ok and "Settings saved and verified." or ("Save failed: " .. tostring(err)), "UE Matcha", 3)
+        pcall(function() writefile(Library.SettingsFile, HttpService:JSONEncode(data)) end)
     end })
     profiles:AddButton({ Text = "Load Settings", Func = function()
+        local wasVisible = self.Visible
+        local wasToggled = Library.Toggled
         local ok, data = pcall(function() return HttpService:JSONDecode(readfile(Library.SettingsFile)) end)
-        if not ok or type(data) ~= "table" then notify("No saved settings file found.", "UE Matcha", 3) return end
+        if not ok or type(data) ~= "table" then return end
         local function color(value, fallback)
             return type(value) == "table" and Color3.new(value[1] or fallback.R, value[2] or fallback.G, value[3] or fallback.B) or fallback
         end
@@ -2085,33 +2059,36 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
         Options["UESettingsOutline" .. suffix]:SetValueRGB(color(data.outline, Library.OutlineColor))
         Options["UESettingsGradientTop" .. suffix]:SetValueRGB(color(data.gradientTop, Library.GradientTopColor))
         Options["UESettingsGradientBottom" .. suffix]:SetValueRGB(color(data.gradientBottom, Library.GradientBottomColor))
-        if data.opacity then Options["UESettingsOpacity" .. suffix]:SetValue(data.opacity) end
-        if data.rainbowSpeed then Options["UESettingsRainbowSpeed" .. suffix]:SetValue(data.rainbowSpeed) end
-        Toggles["UESettingsRainbow" .. suffix]:SetValue(data.rainbow == true)
-        Toggles["UESettingsGradient" .. suffix]:SetValue(data.gradient == true)
-        Toggles["UESettingsCompact" .. suffix]:SetValue(data.compact == true)
-        Toggles["UESettingsPerformance" .. suffix]:SetValue(data.performance == true)
-        Toggles["UESettingsShowFPS" .. suffix]:SetValue(data.showFPS == true)
+        if data.opacity ~= nil then Options["UESettingsOpacity" .. suffix]:SetValue(data.opacity) end
+        if data.rainbowSpeed ~= nil then Options["UESettingsRainbowSpeed" .. suffix]:SetValue(data.rainbowSpeed) end
+        if data.rainbow ~= nil then Toggles["UESettingsRainbow" .. suffix]:SetValue(data.rainbow == true) end
+        if data.gradient ~= nil then Toggles["UESettingsGradient" .. suffix]:SetValue(data.gradient == true) end
+        if data.compact ~= nil then Toggles["UESettingsCompact" .. suffix]:SetValue(data.compact == true) end
+        if data.performance ~= nil then Toggles["UESettingsPerformance" .. suffix]:SetValue(data.performance == true) end
+        if data.showFPS ~= nil then Toggles["UESettingsShowFPS" .. suffix]:SetValue(data.showFPS == true) end
+        if type(data.controls) == "table" then
+            for id, saved in pairs(data.controls) do
+                local control = Toggles[id] or Options[id]
+                if control and type(saved) == "table" and saved.value ~= nil then
+                    pcall(function()
+                        if control.Type == "Toggle" then
+                            control:SetValue(saved.value == true)
+                        elseif control.Type == "Slider" then
+                            control:SetValue(saved.value)
+                        elseif control.Type == "KeyPicker" then
+                            control:SetValue(saved.value)
+                        end
+                    end)
+                end
+            end
+        end
         if data.width and data.height then self.Size = Vector2.new(data.width, data.height) end
         if data.x and data.y then self.Position = Vector2.new(data.x, data.y) end
         if data.menuKey then menuPicker:SetValue(data.menuKey) end
         if data.panicKey then panicPicker:SetValue(data.panicKey) end
-        if type(data.controls) == "table" then
-            local loaded = 0
-            for id, value in pairs(data.controls) do
-                local control = Toggles[id] or Options[id]
-                if control and control.SetValue then
-                    if control.Type == "Toggle" then value = value == true
-                    elseif control.Type == "Slider" then value = tonumber(value) or control.Value
-                    elseif control.Type == "KeyPicker" and type(value) ~= "string" then value = "None" end
-                    local applied = pcall(function() control:SetValue(value) end)
-                    if applied then loaded = loaded + 1 end
-                end
-            end
-            notify("Loaded " .. tostring(loaded) .. " feature controls.", "UE Matcha", 3)
-        end
+        self.Visible = wasVisible
+        Library.Toggled = wasToggled
         self._visibilityDirty = true
-        notify("Settings loaded.", "UE Matcha", 3)
     end })
 
     return tab
