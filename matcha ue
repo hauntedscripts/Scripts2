@@ -2029,7 +2029,7 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
             end
         end
         local data = {
-            version = 2,
+            version = 3,
             opacity = Library.UIOpacity, compact = Library.CompactMode,
             performance = Library.PerformanceMode, showFPS = Library.ShowFPS,
             rainbow = Library.RainbowEnabled, rainbowSpeed = Library.RainbowSpeed,
@@ -2072,7 +2072,11 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
                 if control and type(saved) == "table" and saved.value ~= nil then
                     pcall(function()
                         if control.Type == "Toggle" then
-                            control:SetValue(saved.value == true)
+                            -- Apply the stored state without firing feature callbacks
+                            -- in an arbitrary table order. Some callbacks intentionally
+                            -- disable related toggles, which used to blank the whole UI
+                            -- when a config was loaded.
+                            control.Value = saved.value == true
                         elseif control.Type == "Slider" then
                             control:SetValue(saved.value)
                         elseif control.Type == "KeyPicker" then
