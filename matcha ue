@@ -178,6 +178,7 @@ local Library = {
     GradientTopColor = Color3.fromRGB(25, 35, 55),
     GradientBottomColor = Color3.fromRGB(12, 12, 18),
     SettingsFile = "ue_matcha_settings.json",
+    ConfigFolder = "ue_matcha_configs",
     NotifyConfig = { Alignment = "Left", BarSide = "Left", PositionX = 0, PositionY = 40 }
 }
 Library.Toggles = Toggles
@@ -2014,16 +2015,38 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
         Callback = function(value) Library.ShowFPS = value self._visibilityDirty = true end
     })
 
-    local profiles = tab:AddRightGroupbox("Settings File")
-    profiles:AddButton({ Text = "Save Settings", Func = function()
-        local function colorData(color) return { color.R, color.G, color.B } end
+    local profiles = tab:AddRightGroupbox("Configs")
+    local configFolder = tostring(Library.ConfigFolder or "ue_matcha_configs")
+    local selectedConfig = ""
+    local function safeConfigName(name)
+        name = tostring(name or ""):gsub("[^%w%._%- ]", "_"):gsub("^%s+", ""):gsub("%s+$", "")
+        return (name == "" and "default" or name):sub(1, 64)
+    end
+    local function ensureConfigFolder()
+        pcall(function() if not isfolder(configFolder) then makefolder(configFolder) end end)
+    end
+    local function configPath(name)
+        return configFolder .. "/" .. safeConfigName(name) .. ".json"
+    end
+    local function listConfigNames()
+        ensureConfigFolder()
+        local names = {}
+        local ok, files = pcall(listfiles, configFolder)
+        if ok and type(files) == "table" then
+            for _, path in ipairs(files) do
+                local name = tostring(path):match("([^/\\]+)%.json$")
+                if name then table.insert(names, name) end
+            end
+        end
+        table.sort(names)
+        return names
+    end
+    local function colorData(color) return { color.R, color.G, color.B } end
+    local function captureControls()
         local controls = {}
-        local toggleStates = {}
         for id, control in pairs(Toggles) do
             if control and control.Type == "Toggle" then
-                local enabled = control.Value == true
-                toggleStates[id] = enabled
-                controls[id] = { type = "Toggle", value = enabled }
+                controls[id] = { type = "Toggle", value = control.Value == true }
             end
         end
         for id, control in pairs(Options) do
@@ -2031,10 +2054,17 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
                 controls[id] = { type = "Slider", value = control.Value }
             elseif control and control.Type == "KeyPicker" then
                 controls[id] = { type = "KeyPicker", value = control.Value }
+            elseif control and control.Type == "Dropdown" then
+                controls[id] = { type = "Dropdown", value = control.Value }
             end
         end
+        return controls
+    end
+    local function saveConfig(name)
+        name = safeConfigName(name or selectedConfig)
+        ensureConfigFolder()
         local data = {
-            version = 3,
+            version = 4, name = name, controls = captureControls(),
             opacity = Library.UIOpacity, compact = Library.CompactMode,
             performance = Library.PerformanceMode, showFPS = Library.ShowFPS,
             rainbow = Library.RainbowEnabled, rainbowSpeed = Library.RainbowSpeed,
@@ -2044,21 +2074,19 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
             panels = colorData(Library.MainColor), text = colorData(Library.FontColor),
             outline = colorData(Library.OutlineColor), gradientTop = colorData(Library.GradientTopColor),
             gradientBottom = colorData(Library.GradientBottomColor),
-            menuKey = menuPicker.Value, panicKey = panicPicker.Value,
-            controls = controls, toggles = toggleStates
+            menuKey = menuPicker.Value, panicKey = panicPicker.Value
         }
-        pcall(function() writefile(Library.SettingsFile, HttpService:JSONEncode(data)) end)
-    end })
-    profiles:AddButton({ Text = "Load Settings", Func = function()
-        local wasVisible = self.Visible
-        local wasToggled = Library.Toggled
-        local ok, data = pcall(function() return HttpService:JSONDecode(readfile(Library.SettingsFile)) end)
-        if not ok or type(data) ~= "table" then return end
+        local ok = pcall(function() writefile(configPath(name), HttpService:JSONEncode(data)) end)
+        if ok then selectedConfig = name end
+        return ok
+    end
+    local function loadConfig(name)
+        name = safeConfigName(name or selectedConfig)
+        local wasVisible, wasToggled = self.Visible, Library.Toggled
+        local ok, data = pcall(function() return HttpService:JSONDecode(readfile(configPath(name))) end)
+        if not ok or type(data) ~= "table" or data.version ~= 4 or type(data.controls) ~= "table" then return false end
         local function color(value, fallback)
             return type(value) == "table" and Color3.new(value[1] or fallback.R, value[2] or fallback.G, value[3] or fallback.B) or fallback
-        end
-        local function setIfChanged(control, value)
-            if control and control.Value ~= value then control:SetValue(value) end
         end
         Options["UESettingsAccent" .. suffix]:SetValueRGB(color(data.accent, Library.StaticAccentColor))
         Options["UESettingsBackground" .. suffix]:SetValueRGB(color(data.background, Library.BackgroundColor))
@@ -2069,68 +2097,70 @@ function WindowMethods:_buildSettingsTab(defaultWidth, defaultHeight)
         Options["UESettingsGradientBottom" .. suffix]:SetValueRGB(color(data.gradientBottom, Library.GradientBottomColor))
         if data.opacity ~= nil then Options["UESettingsOpacity" .. suffix]:SetValue(data.opacity) end
         if data.rainbowSpeed ~= nil then Options["UESettingsRainbowSpeed" .. suffix]:SetValue(data.rainbowSpeed) end
-        if data.rainbow ~= nil then setIfChanged(Toggles["UESettingsRainbow" .. suffix], data.rainbow == true) end
-        if data.gradient ~= nil then setIfChanged(Toggles["UESettingsGradient" .. suffix], data.gradient == true) end
-        if data.compact ~= nil then setIfChanged(Toggles["UESettingsCompact" .. suffix], data.compact == true) end
-        if data.performance ~= nil then setIfChanged(Toggles["UESettingsPerformance" .. suffix], data.performance == true) end
-        if data.showFPS ~= nil then setIfChanged(Toggles["UESettingsShowFPS" .. suffix], data.showFPS == true) end
-        -- Restore toggle state in one pass, without firing callbacks while the
-        -- table is being iterated. Callback-driven toggles can otherwise switch
-        -- other toggles off and make a loaded config look completely disabled.
-        local loadedToggles = {}
-        if type(data.toggles) == "table" then
-            for id, value in pairs(data.toggles) do
-                if type(value) == "boolean" then loadedToggles[id] = value end
-            end
-        end
-        if next(loadedToggles) == nil and type(data.controls) == "table" then
-            for id, saved in pairs(data.controls) do
-                if type(saved) == "table" and saved.type == "Toggle" and type(saved.value) == "boolean" then
-                    loadedToggles[id] = saved.value
+        if data.width and data.height then self.Size = Vector2.new(data.width, data.height) end
+        if data.x and data.y then self.Position = Vector2.new(data.x, data.y) end
+        local toggleStates, previous = {}, {}
+        for id, saved in pairs(data.controls) do
+            local control = Toggles[id] or Options[id]
+            if control and type(saved) == "table" and saved.value ~= nil then
+                if control.Type == "Toggle" and type(saved.value) == "boolean" then
+                    toggleStates[id] = saved.value
+                elseif control.Type == "Slider" or control.Type == "Dropdown" then
+                    pcall(function() control:SetValue(saved.value) end)
+                elseif control.Type == "KeyPicker" then
+                    control.Value = saved.value
                 end
             end
         end
-        local previousToggles = {}
-        for id, value in pairs(loadedToggles) do
+        for id, value in pairs(toggleStates) do
             local control = Toggles[id]
-            if control and control.Type == "Toggle" then
-                previousToggles[id] = control.Value == true
-                control.Value = value
-            end
+            if control then previous[id] = control.Value == true; control.Value = value end
         end
-        -- Give feature callbacks the final requested state, then re-apply the
-        -- values in case one callback changes a related toggle.
-        for id, value in pairs(loadedToggles) do
+        for id, value in pairs(toggleStates) do
             local control = Toggles[id]
-            if control and control.Type == "Toggle" and previousToggles[id] ~= value then
+            if control and previous[id] ~= value then
                 safeCallback(control.Callback, value)
                 safeCallback(control.Changed, value)
             end
         end
-        for id, value in pairs(loadedToggles) do
-            local control = Toggles[id]
-            if control and control.Type == "Toggle" then control.Value = value end
+        for id, value in pairs(toggleStates) do
+            if Toggles[id] then Toggles[id].Value = value end
         end
-        if type(data.controls) == "table" then
-            for id, saved in pairs(data.controls) do
-                local control = Toggles[id] or Options[id]
-                if control and type(saved) == "table" and saved.value ~= nil and control.Type ~= "Toggle" then
-                    pcall(function()
-                        if control.Type == "Slider" or control.Type == "KeyPicker" then
-                            control:SetValue(saved.value)
-                        end
-                    end)
-                end
+        if data.menuKey then menuPicker.Value = data.menuKey end
+        if data.panicKey then panicPicker.Value = data.panicKey end
+        self.Visible, Library.Toggled = wasVisible, wasToggled
+        self._visibilityDirty = true
+        selectedConfig = name
+        return true
+    end
+    local configName = profiles:AddInput("UESettingsConfigName" .. suffix, {
+        Text = "Config Name", Default = "default", Placeholder = "config name"
+    })
+    local configPicker = profiles:AddDropdown("UESettingsConfigPicker" .. suffix, {
+        Text = "Choose Config", Values = listConfigNames(), AllowNull = true,
+        Callback = function(value)
+            if type(value) == "string" and value ~= "" then
+                selectedConfig = value
+                if configName and configName.SetValue then configName:SetValue(value) end
             end
         end
-        if data.width and data.height then self.Size = Vector2.new(data.width, data.height) end
-        if data.x and data.y then self.Position = Vector2.new(data.x, data.y) end
-        if data.menuKey then menuPicker:SetValue(data.menuKey) end
-        if data.panicKey then panicPicker:SetValue(data.panicKey) end
-        self.Visible = wasVisible
-        Library.Toggled = wasToggled
-        self._visibilityDirty = true
+    })
+    local function refreshConfigs()
+        local names = listConfigNames()
+        if configPicker and configPicker.SetValues then configPicker:SetValues(names) end
+        return names
+    end
+    profiles:AddButton({ Text = "Create / Overwrite Config", Func = function()
+        local requested = configName and configName.Value or ""
+        if selectedConfig ~= "" and (requested == "" or requested == "default") then requested = selectedConfig end
+        saveConfig(requested)
+        refreshConfigs()
     end })
+    profiles:AddButton({ Text = "Load Selected Config", Func = function()
+        loadConfig(selectedConfig ~= "" and selectedConfig or (configName and configName.Value))
+    end })
+    profiles:AddButton({ Text = "Refresh Configs", Func = refreshConfigs })
+    Library.Configs = { Folder = configFolder, Save = saveConfig, Load = loadConfig, Refresh = refreshConfigs }
 
     return tab
 end
